@@ -1,3 +1,4 @@
+pub mod connections;
 pub mod cpu;
 pub mod disk;
 pub mod format;
