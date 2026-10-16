@@ -21,7 +21,7 @@ fn recording() -> Trace {
 fn a_saved_trace_loads_back_identical() {
     let directory = directory("round-trip");
     let trace = recording();
-    let path = trace.save(&directory).unwrap();
+    let path = trace.save(&directory, "run").unwrap();
     assert_eq!(Trace::load(&path).unwrap(), trace);
 }
 
@@ -29,10 +29,14 @@ fn a_saved_trace_loads_back_identical() {
 fn saving_never_replaces_an_existing_recording() {
     let directory = directory("no-overwrite");
     let trace = recording();
-    trace.save(&directory).unwrap();
-    let error = trace.save(&directory).unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
-    assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+    let first = trace.save(&directory, "run").unwrap();
+    let second = trace.save(&directory, "run").unwrap();
+    let third = trace.save(&directory, "run").unwrap();
+    assert_eq!(
+        [first, second, third].map(|path| path.file_name().unwrap().to_string_lossy().into_owned()),
+        ["run.json", "run-2.json", "run-3.json"]
+    );
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 3);
 }
 
 #[test]

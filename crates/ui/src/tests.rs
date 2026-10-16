@@ -199,6 +199,30 @@ fn the_popout_keeps_the_history_going_with_the_main_window_closed() {
     assert_eq!(app.history.series(|_| 0.0).len(), before + 1);
 }
 
+#[test]
+fn recordings_are_listed_and_deleting_asks_before_it_deletes() {
+    let mut app = sampled();
+    update(&mut app, Message::Navigate(Page::Flight));
+    let files = [
+        "peepers-2026-10-16-1148-12min-gaming",
+        "peepers-2026-10-15-0930-3min",
+    ];
+    update(
+        &mut app,
+        Message::Flight(flight::Message::Files(
+            files
+                .map(|name| format!("/recordings/{name}.json").into())
+                .to_vec(),
+        )),
+    );
+    assert!(ui(&app).find("2 recordings").is_ok());
+    assert!(ui(&app).find(format!("{}.json", files[0])).is_ok());
+    click(&mut app, "Delete all");
+    assert!(ui(&app).find("Delete all 2 recordings?").is_ok());
+    click(&mut app, "Keep");
+    assert!(ui(&app).find("Delete all").is_ok());
+}
+
 fn recording(frames: usize) -> peepers_core::trace::Trace {
     let vitals = Sampler::default().sample().unwrap().vitals;
     let mut recorder = peepers_core::trace::Recorder::start(&vitals);
@@ -321,6 +345,7 @@ fn render_pages() {
                 .unwrap()
         );
     }
+    render_recordings(&mut app, &directory);
     let snapshot = popout(&mut app).snapshot(&Theme::Dark).unwrap();
     assert!(
         snapshot
@@ -344,6 +369,36 @@ fn render_pages() {
                 .unwrap()
         );
     }
+}
+
+/// The recordings list with one deletion waiting for its answer.
+fn render_recordings(app: &mut Peepers, directory: &str) {
+    update(app, Message::Flight(flight::Message::Close));
+    update(
+        app,
+        Message::Flight(flight::Message::Files(
+            [
+                "peepers-2026-10-16-1148-12min-gaming",
+                "peepers-2026-10-15-0930-3min",
+                "peepers-1792122032",
+            ]
+            .map(|name| format!("/recordings/{name}.json").into())
+            .to_vec(),
+        )),
+    );
+    update(
+        app,
+        Message::Flight(flight::Message::Ask(flight::Doomed::One(
+            "/recordings/peepers-2026-10-15-0930-3min.json".into(),
+        ))),
+    );
+    update(app, Message::Navigate(Page::Flight));
+    let snapshot = ui(app).snapshot(&Theme::Dark).unwrap();
+    assert!(
+        snapshot
+            .matches_image(format!("{directory}/Flight-List"))
+            .unwrap()
+    );
 }
 
 /// Results of every kind, with the numbers this machine produced, for the benchmarks page.

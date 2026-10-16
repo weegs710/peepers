@@ -28,6 +28,11 @@ pub fn date_time(epoch: u64) -> String {
     stamp(epoch, "%Y-%m-%d %H:%M", &TimeZone::system())
 }
 
+/// The same moment as `YYYY-MM-DD-HHMM`, which is safe in a file name.
+pub fn file_stamp(epoch: u64) -> String {
+    stamp(epoch, "%Y-%m-%d-%H%M", &TimeZone::system())
+}
+
 fn stamp(epoch: u64, pattern: &str, zone: &TimeZone) -> String {
     i64::try_from(epoch)
         .ok()
@@ -58,5 +63,11 @@ mod tests {
             stamp(1_760_568_000, DATE_TIME, &eastern),
             "2025-10-15 18:40"
         );
+    }
+
+    #[test]
+    fn a_file_stamp_has_no_spaces_or_colons() {
+        let stamp = file_stamp(1_760_568_000);
+        assert!(stamp.chars().all(|c| c.is_ascii_digit() || c == '-'));
     }
 }

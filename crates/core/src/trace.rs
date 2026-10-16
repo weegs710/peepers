@@ -350,14 +350,21 @@ impl Trace {
         Ok(())
     }
 
-    /// Writes the trace as a new file in `directory`, never replacing one that exists.
+    /// Writes the trace to `<stem>.json` in `directory`, or to the first of `<stem>-2.json`,
+    /// `<stem>-3.json` and so on that is free, so that no recording replaces another.
     ///
     /// # Errors
     ///
-    /// Fails when the directory cannot be created or written, or the file is already there.
-    pub fn save(&self, directory: &Path) -> io::Result<PathBuf> {
+    /// Fails when the directory cannot be created or written.
+    pub fn save(&self, directory: &Path, stem: &str) -> io::Result<PathBuf> {
         fs::create_dir_all(directory)?;
-        let path = directory.join(format!("peepers-{}.json", self.header.recorded_at));
+        let path = (1..=u32::MAX)
+            .map(|attempt| match attempt {
+                1 => directory.join(format!("{stem}.json")),
+                _ => directory.join(format!("{stem}-{attempt}.json")),
+            })
+            .find(|path| !path.exists())
+            .ok_or(io::ErrorKind::AlreadyExists)?;
         let partial = path.with_extension("json.partial");
         let mut writer = BufWriter::new(File::create_new(&partial)?);
         serde_json::to_writer(&mut writer, self).map_err(io::Error::from)?;
