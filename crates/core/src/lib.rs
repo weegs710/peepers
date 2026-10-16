@@ -17,6 +17,7 @@ pub mod startup;
 pub mod system;
 pub mod systemd;
 pub mod telemetry;
+pub mod trace;
 pub mod users;
 pub mod volumes;
 
