@@ -23,6 +23,10 @@ impl History {
     pub fn series(&self, metric: impl Fn(&Vitals) -> f32) -> Vec<f32> {
         self.0.iter().map(metric).collect()
     }
+
+    pub fn optional_series(&self, metric: impl Fn(&Vitals) -> Option<f32>) -> Vec<Option<f32>> {
+        self.0.iter().map(metric).collect()
+    }
 }
 
 #[cfg(test)]

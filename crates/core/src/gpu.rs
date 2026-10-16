@@ -1,3 +1,7 @@
+mod fdinfo;
+mod nvidia;
+
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -14,6 +18,71 @@ pub enum Vendor {
     Nvidia,
     Intel,
     Other(u16),
+}
+
+/// Adds driver-specific counters to the DRM inventory. Intel engine times need two samples.
+#[derive(Debug, Default)]
+pub struct Sampler {
+    intel: fdinfo::Sampler,
+    nvidia: sensors::Cached<Vec<nvidia::Metrics>>,
+}
+
+impl Sampler {
+    pub fn sample(&mut self) -> Vec<Adapter> {
+        let mut adapters = Adapter::read_all();
+        let intel = if adapters
+            .iter()
+            .any(|gpu| gpu.vendor == Vendor::Intel && gpu.busy.is_none())
+        {
+            self.intel.sample()
+        } else {
+            HashMap::new()
+        };
+        let nvidia = if adapters.iter().any(|gpu| gpu.vendor == Vendor::Nvidia) {
+            self.nvidia.get(nvidia::read)
+        } else {
+            Vec::new()
+        };
+        for adapter in &mut adapters {
+            let Some(address) =
+                fs::canonicalize(Path::new(DRM_DIR).join(&adapter.card).join("device"))
+                    .ok()
+                    .and_then(|path| pci_address(path.file_name()?.to_str()?))
+            else {
+                continue;
+            };
+            match adapter.vendor {
+                Vendor::Intel => {
+                    adapter.busy = adapter.busy.or_else(|| intel.get(&address).copied());
+                }
+                Vendor::Nvidia => {
+                    if let Some(metrics) = nvidia.iter().find(|metrics| metrics.address == address)
+                    {
+                        adapter.busy = metrics.busy.or(adapter.busy);
+                        adapter.vram = metrics.vram.or(adapter.vram);
+                    }
+                }
+                _ => {}
+            }
+        }
+        adapters
+    }
+}
+
+/// NVIDIA prints eight domain digits; sysfs and fdinfo normally print four.
+fn pci_address(text: &str) -> Option<String> {
+    let parts = text
+        .trim()
+        .split([':', '.'])
+        .map(|part| u32::from_str_radix(part, 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let [domain, bus, device, function] = parts.as_slice() else {
+        return None;
+    };
+    if *bus > 255 || *device > 31 || *function > 7 {
+        return None;
+    }
+    Some(format!("{domain:04x}:{bus:02x}:{device:02x}.{function:x}"))
 }
 
 impl Vendor {

@@ -44,7 +44,12 @@ pub fn view<'a, Message: 'a>(
     };
     let mut facts = vec![
         (
-            "Utilization".to_owned(),
+            if adapter.vendor == Vendor::Intel {
+                "Utilization (accessible processes)"
+            } else {
+                "Utilization"
+            }
+            .to_owned(),
             adapter
                 .busy
                 .map_or_else(format::unavailable, |busy| format!("{busy:.0}%")),
@@ -82,19 +87,16 @@ pub fn view<'a, Message: 'a>(
 }
 
 fn graph(history: &History, name: &str) -> Graph {
-    let utilization = history.series(|vitals| {
-        find(vitals, name)
-            .and_then(|adapter| adapter.busy)
-            .unwrap_or(0.0)
-    });
-    let memory = history.series(|vitals| {
+    let utilization =
+        history.optional_series(|vitals| find(vitals, name).and_then(|adapter| adapter.busy));
+    let memory = history.optional_series(|vitals| {
         find(vitals, name)
             .and_then(|adapter| adapter.vram)
-            .map_or(0.0, |vram| 100.0 * pool_ratio(vram))
+            .map(|vram| 100.0 * pool_ratio(vram))
     });
     Graph::new(Scale::Fixed(100.0))
-        .line(utilization, Tone::Primary)
-        .line(memory, Tone::Warning)
+        .optional_line(utilization, Tone::Primary)
+        .optional_line(memory, Tone::Warning)
 }
 
 fn pool_ratio(pool: Pool) -> f32 {

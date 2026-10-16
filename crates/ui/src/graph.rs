@@ -1,6 +1,6 @@
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
-use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Theme};
+use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme};
 
 use crate::history::CAPACITY;
 
@@ -51,7 +51,7 @@ pub enum Scale {
 #[derive(Debug)]
 pub struct Graph {
     scale: Scale,
-    lines: Vec<(Vec<f32>, Tone)>,
+    lines: Vec<(Vec<Option<f32>>, Tone)>,
     /// How many values fit across the width.
     span: usize,
     /// Where to draw a vertical cursor, as a fraction of the width.
@@ -79,6 +79,13 @@ impl Graph {
     }
 
     pub fn line(mut self, values: Vec<f32>, tone: Tone) -> Self {
+        self.lines
+            .push((values.into_iter().map(Some).collect(), tone));
+        self
+    }
+
+    /// Missing readings leave gaps, keeping the time axis without inventing zeroes.
+    pub fn optional_line(mut self, values: Vec<Option<f32>>, tone: Tone) -> Self {
         self.lines.push((values, tone));
         self
     }
@@ -94,6 +101,7 @@ impl Graph {
                 .lines
                 .iter()
                 .flat_map(|(values, _)| values)
+                .flatten()
                 .fold(floor, |peak, &value| peak.max(value)),
         }
     }
@@ -128,37 +136,28 @@ impl<Message> canvas::Program<Message> for Graph {
         let ceiling = self.ceiling().max(f32::EPSILON);
         for (values, tone) in &self.lines {
             let color = tone.color(theme);
-            let newest = values.len().saturating_sub(1);
-            let points: Vec<Point> = values
-                .iter()
-                .enumerate()
-                .map(|(index, &value)| {
-                    Point::new(
-                        width * (1.0 - along(newest - index, self.span - 1)),
-                        height * (1.0 - (value / ceiling).clamp(0.0, 1.0)),
-                    )
-                })
-                .collect();
-            let (Some(first), Some(last)) = (points.first(), points.last()) else {
-                continue;
-            };
-            let outline = Path::new(|builder| {
-                builder.move_to(*first);
-                for &point in &points[1..] {
-                    builder.line_to(point);
-                }
-            });
-            let area = Path::new(|builder| {
-                builder.move_to(Point::new(first.x, height));
-                for &point in &points {
-                    builder.line_to(point);
-                }
-                builder.line_to(Point::new(last.x, height));
-                builder.close();
-            });
-            frame.fill(&area, color.scale_alpha(0.18));
-            glow(&mut frame, &points, color, height);
-            frame.stroke(&outline, round(1.5, lighten(color, 0.35)));
+            for points in segments(values, self.span, ceiling, bounds.size()) {
+                let (Some(first), Some(last)) = (points.first(), points.last()) else {
+                    continue;
+                };
+                let outline = Path::new(|builder| {
+                    builder.move_to(*first);
+                    for &point in &points[1..] {
+                        builder.line_to(point);
+                    }
+                });
+                let area = Path::new(|builder| {
+                    builder.move_to(Point::new(first.x, height));
+                    for &point in &points {
+                        builder.line_to(point);
+                    }
+                    builder.line_to(Point::new(last.x, height));
+                    builder.close();
+                });
+                frame.fill(&area, color.scale_alpha(0.18));
+                glow(&mut frame, &points, color, height);
+                frame.stroke(&outline, round(1.5, lighten(color, 0.35)));
+            }
         }
         if let Some(fraction) = self.marker {
             let x = width * fraction;
@@ -170,6 +169,27 @@ impl<Message> canvas::Program<Message> for Graph {
         }
         vec![frame.into_geometry()]
     }
+}
+
+/// Separate paths at missing samples while retaining their positions on the time axis.
+fn segments(values: &[Option<f32>], span: usize, ceiling: f32, size: Size) -> Vec<Vec<Point>> {
+    let newest = values.len().saturating_sub(1);
+    let mut segments = Vec::new();
+    let mut segment = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        if let Some(value) = value.filter(|value| value.is_finite()) {
+            segment.push(Point::new(
+                size.width * (1.0 - along(newest - index, span - 1)),
+                size.height * (1.0 - (value / ceiling).clamp(0.0, 1.0)),
+            ));
+        } else if !segment.is_empty() {
+            segments.push(std::mem::take(&mut segment));
+        }
+    }
+    if !segment.is_empty() {
+        segments.push(segment);
+    }
+    segments
 }
 
 fn lighten(color: Color, amount: f32) -> Color {
@@ -251,6 +271,35 @@ pub fn decimate(values: &[f32], buckets: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_readings_leave_gaps_without_shifting_time_or_hiding_real_zeroes() {
+        let paths = segments(
+            &[Some(25.0), None, Some(0.0), Some(100.0)],
+            4,
+            100.0,
+            Size::new(300.0, 100.0),
+        );
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], [Point::new(0.0, 75.0)]);
+        assert_eq!(paths[1].len(), 2);
+        for (actual, expected) in paths[1]
+            .iter()
+            .zip([Point::new(200.0, 100.0), Point::new(300.0, 0.0)])
+        {
+            assert!((actual.x - expected.x).abs() < 0.001);
+            assert!((actual.y - expected.y).abs() < 0.001);
+        }
+        assert!(
+            segments(
+                &[None, Some(f32::NAN), None],
+                4,
+                100.0,
+                Size::new(300.0, 100.0)
+            )
+            .is_empty()
+        );
+    }
 
     #[test]
     fn short_series_pass_through() {

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::cpu::{self, Usage};
 use crate::disk::{self, Disk};
-use crate::gpu::Adapter;
+use crate::gpu::{self, Adapter};
 use crate::memory::Memory;
 use crate::network::{self, Interface};
 use crate::power::{self, Domain};
@@ -47,6 +47,7 @@ pub struct Sampler {
     network: network::Sampler,
     power: power::Sampler,
     process: process::Sampler,
+    gpu: gpu::Sampler,
     chips: Cached<Vec<Chip>>,
 }
 
@@ -68,7 +69,7 @@ impl Sampler {
                 },
                 disks: self.disk.sample()?,
                 interfaces: self.network.sample()?,
-                adapters: Adapter::read_all(),
+                adapters: self.gpu.sample(),
                 chips: self.chips.get(sensors::chips),
                 power: self.power.sample(),
             },
