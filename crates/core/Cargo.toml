@@ -1,0 +1,17 @@
+[package]
+name = "peepers-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+nix = { version = "0.31", default-features = false, features = ["net"] }
+rustix = { version = "1", features = ["fs", "param", "process", "thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "3"
+zbus = "5"
+zvariant = "5"
+
+[lints]
+workspace = true
