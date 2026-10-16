@@ -6,6 +6,7 @@ pub mod disk;
 pub mod drivers;
 pub mod format;
 pub mod gpu;
+pub mod health;
 pub mod memory;
 pub mod network;
 pub mod power;
