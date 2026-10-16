@@ -3,9 +3,11 @@ pub mod format;
 pub mod memory;
 pub mod pressure;
 pub mod process;
+pub mod sensors;
 pub mod system;
 pub mod users;
 
 mod math;
+mod pci;
 mod stat;
 mod sysfs;
