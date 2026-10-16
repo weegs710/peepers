@@ -1,0 +1,149 @@
+mod cpu;
+mod disk;
+mod gpu;
+mod memory;
+mod network;
+
+use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::{Element, Fill};
+use peepers_core::cpu::Info;
+use peepers_core::network::Kind;
+use peepers_core::telemetry::Vitals;
+
+use crate::graph::Graph;
+use crate::history::History;
+use crate::settings::Temperature;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Device {
+    Cpu,
+    Memory,
+    Disk(String),
+    Network(String),
+    Gpu(String),
+}
+
+impl Device {
+    fn card(&self, history: &History) -> Card {
+        match self {
+            Self::Cpu => cpu::card(history),
+            Self::Memory => memory::card(history),
+            Self::Disk(name) => disk::card(history, name),
+            Self::Network(name) => network::card(history, name),
+            Self::Gpu(name) => gpu::card(history, name),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Select(Device),
+}
+
+/// What the device list shows for one device.
+struct Card {
+    title: String,
+    value: String,
+    graph: Graph,
+}
+
+pub struct Performance {
+    selected: Device,
+    cpu: Info,
+}
+
+impl Default for Performance {
+    fn default() -> Self {
+        Self {
+            selected: Device::Cpu,
+            cpu: Info::read(),
+        }
+    }
+}
+
+impl Performance {
+    pub fn update(&mut self, message: Message) {
+        match message {
+            Message::Select(device) => self.selected = device,
+        }
+    }
+
+    pub fn view<'a>(&'a self, history: &History, unit: Temperature) -> Element<'a, Message> {
+        let Some(latest) = history.latest() else {
+            return container(text("Waiting for the first sample").style(text::secondary))
+                .center(Fill)
+                .into();
+        };
+        let devices = devices(latest);
+        let selected = if devices.contains(&self.selected) {
+            &self.selected
+        } else {
+            &Device::Cpu
+        };
+
+        let list = devices.iter().map(|device| {
+            let card = device.card(history);
+            let content = column![
+                row![text(card.title), space::horizontal(), text(card.value)],
+                container(card.graph.view()).height(40),
+            ]
+            .spacing(6);
+            button(content)
+                .width(Fill)
+                .on_press(Message::Select(device.clone()))
+                .style(if device == selected {
+                    button::secondary
+                } else {
+                    button::text
+                })
+                .into()
+        });
+
+        row![
+            scrollable(column(list).spacing(4).padding(8)).width(260),
+            container(self.detail(selected, history, latest, unit)).width(Fill),
+        ]
+        .into()
+    }
+
+    fn detail<'a>(
+        &'a self,
+        device: &Device,
+        history: &History,
+        latest: &Vitals,
+        unit: Temperature,
+    ) -> Element<'a, Message> {
+        match device {
+            Device::Cpu => cpu::view(history, latest, &self.cpu),
+            Device::Memory => memory::view(history, latest),
+            Device::Disk(name) => disk::view(history, latest, name, unit),
+            Device::Network(name) => network::view(history, latest, name),
+            Device::Gpu(name) => gpu::view(history, latest, name, unit),
+        }
+    }
+}
+
+fn devices(vitals: &Vitals) -> Vec<Device> {
+    [Device::Cpu, Device::Memory]
+        .into_iter()
+        .chain(
+            vitals
+                .disks
+                .iter()
+                .map(|disk| Device::Disk(disk.name.clone())),
+        )
+        .chain(
+            vitals
+                .interfaces
+                .iter()
+                .filter(|interface| matches!(interface.kind, Kind::Ethernet | Kind::Wireless))
+                .map(|interface| Device::Network(interface.name.clone())),
+        )
+        .chain(
+            vitals
+                .adapters
+                .iter()
+                .map(|adapter| Device::Gpu(adapter.card.clone())),
+        )
+        .collect()
+}
