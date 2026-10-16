@@ -1,6 +1,8 @@
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::time::Duration;
 
 use iced::alignment::Vertical;
@@ -13,7 +15,9 @@ use crate::format;
 use crate::history::CAPACITY;
 
 /// A graph shorter than this carries no scale: the labels would crowd the line they describe.
-const AXIS_MIN_HEIGHT: f32 = 120.0;
+const AXIS_MIN_HEIGHT: f32 = 150.0;
+/// The height of a card's graph where the scale has room to show.
+pub const LABELLED_HEIGHT: f32 = AXIS_MIN_HEIGHT + 10.0;
 const AXIS_TEXT: f32 = 11.0;
 const AXIS_INSET: f32 = 4.0;
 
@@ -73,6 +77,17 @@ struct Line {
     name: Option<String>,
 }
 
+/// How a graph value is written. A closure rather than a function, since a unit such as the
+/// temperature scale is only known at run time.
+#[derive(Clone)]
+struct Readout(Rc<dyn Fn(f32) -> String>);
+
+impl fmt::Debug for Readout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Readout").finish_non_exhaustive()
+    }
+}
+
 /// A scrolling line graph; the newest value is at the right edge.
 #[derive(Debug)]
 pub struct Graph {
@@ -84,7 +99,7 @@ pub struct Graph {
     marker: Option<f32>,
     /// How a value is written, in the tooltip and on the scale; a graph without one has neither
     /// scale labels nor a unit to give them.
-    readout: Option<fn(f32) -> String>,
+    readout: Option<Readout>,
 }
 
 impl Graph {
@@ -132,8 +147,8 @@ impl Graph {
     }
 
     /// How a value is written, which also labels the scale on a graph tall enough to carry it.
-    pub fn readout(mut self, readout: fn(f32) -> String) -> Self {
-        self.readout = Some(readout);
+    pub fn readout(mut self, readout: impl Fn(f32) -> String + 'static) -> Self {
+        self.readout = Some(Readout(Rc::new(readout)));
         self
     }
 
@@ -179,10 +194,16 @@ impl Graph {
                 Some((
                     line.tone,
                     line.name.clone()?,
-                    newest.map_or_else(format::unavailable, self.readout.unwrap_or(plain)),
+                    newest.map_or_else(format::unavailable, |value| self.write(value)),
                 ))
             })
             .collect()
+    }
+
+    fn write(&self, value: f32) -> String {
+        self.readout
+            .as_ref()
+            .map_or_else(|| plain(value), |readout| (readout.0)(value))
     }
 
     fn ceiling(&self) -> f32 {
@@ -242,9 +263,13 @@ impl Graph {
         .hash(&mut hasher);
         self.span.hash(&mut hasher);
         self.marker.map(f32::to_bits).hash(&mut hasher);
-        self.readout
-            .map(|readout| readout as usize)
-            .hash(&mut hasher);
+        if self.readout.is_some() {
+            let ceiling = self.ceiling();
+            for quarter in 0..4 {
+                self.write(ceiling * (1.0 - along(quarter, 4)))
+                    .hash(&mut hasher);
+            }
+        }
         for line in &self.lines {
             std::mem::discriminant(&line.tone).hash(&mut hasher);
             for value in &line.values {
@@ -270,8 +295,8 @@ impl Graph {
         }
 
         let ceiling = self.ceiling().max(f32::EPSILON);
-        if let Some(readout) = self.readout.filter(|_| height >= AXIS_MIN_HEIGHT) {
-            scale(frame, theme, height, |share| readout(ceiling * share));
+        if self.readout.is_some() && height >= AXIS_MIN_HEIGHT {
+            scale(frame, theme, height, |share| self.write(ceiling * share));
         }
         for line in &self.lines {
             let color = line.tone.color(theme);
@@ -450,6 +475,16 @@ pub fn as_rate(value: f32) -> String {
     format::rate(value.max(0.0) as u64)
 }
 
+/// A graph value that is a clock speed in kilohertz.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a clock is never negative and graph values need display precision only"
+)]
+pub fn as_frequency(value: f32) -> String {
+    format::frequency(value.max(0.0) as u64)
+}
+
 /// A counter or rate as a graph value.
 #[expect(
     clippy::cast_precision_loss,
@@ -515,6 +550,22 @@ mod tests {
     }
 
     #[test]
+    fn a_readout_that_writes_differently_changes_the_picture() {
+        let dark = Theme::Dark;
+        let in_unit = |unit: &'static str| {
+            cpu(vec![1.0, 2.0]).readout(move |value| format!("{value:.0} {unit}"))
+        };
+        assert_eq!(
+            in_unit("C").fingerprint(&dark),
+            in_unit("C").fingerprint(&dark)
+        );
+        assert_ne!(
+            in_unit("C").fingerprint(&dark),
+            in_unit("F").fingerprint(&dark)
+        );
+    }
+
+    #[test]
     fn a_gap_is_not_a_zero() {
         let dark = Theme::Dark;
         let gap =
@@ -558,6 +609,12 @@ mod tests {
     fn rates_read_in_bytes_and_never_below_zero() {
         assert_eq!(as_rate(1_048_576.0), "1.0 MiB/s");
         assert_eq!(as_rate(-5.0), "0 B/s");
+    }
+
+    #[test]
+    fn clocks_read_in_gigahertz_from_kilohertz() {
+        assert_eq!(as_frequency(3_200_000.0), "3.20 GHz");
+        assert_eq!(as_frequency(-1.0), "0.00 GHz");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use peepers_core::process::Process;
 use peepers_core::telemetry::Vitals;
 
 use crate::format;
-use crate::graph::{Graph, Scale, Tone, level};
+use crate::graph::{Graph, LABELLED_HEIGHT, Scale, Tone, level};
 use crate::history::History;
 use crate::processes::Processes;
 
@@ -148,9 +148,11 @@ fn card<'a, Message: 'a>(
             container(
                 Graph::new(Scale::Fit { floor: 10.0 })
                     .line(some, Tone::Warning)
+                    .named("Stalled (10 s)")
+                    .readout(|value| format!("{value:.1}%"))
                     .view()
             )
-            .height(80),
+            .height(LABELLED_HEIGHT),
             column(lines).spacing(2),
         ]
         .spacing(8),

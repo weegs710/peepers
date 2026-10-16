@@ -4,17 +4,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{
-    button, column, container, pick_list, row, scrollable, slider, space, text, text_input,
-};
+use iced::widget::{button, column, container, pick_list, row, slider, space, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::telemetry::Vitals;
 use peepers_core::trace::{Frame, Recorder, Trace};
 
 use crate::blocking;
 use crate::format;
-use crate::graph::{Graph, Scale, Tone, decimate, level};
+use crate::graph::{Graph, LABELLED_HEIGHT, Scale, Tone, as_percent, as_rate, decimate, level};
 use crate::storage;
+use crate::widgets::scrolling;
 
 const TICK: Duration = Duration::from_millis(100);
 /// The most points a replay graph draws, however long the recording.
@@ -386,7 +385,7 @@ impl Flight {
                 everything,
             ]
             .align_y(iced::Center),
-            scrollable(column(rows).spacing(6)).height(Fill),
+            scrolling(column(rows).spacing(6)).height(Fill),
         ]
         .spacing(12)
         .into()
@@ -420,7 +419,7 @@ fn replay_view(replay: &Replay) -> Element<'_, Message> {
             header.kernel
         ))
         .style(text::secondary),
-        scrollable(row(cards(replay)).spacing(12).wrap().vertical_spacing(12)).height(Fill),
+        scrolling(row(cards(replay)).spacing(12).wrap().vertical_spacing(12)).height(Fill),
     ]
     .spacing(12)
     .into()
@@ -489,13 +488,17 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
             "CPU",
             format!("{:.0}%", at.cpu),
             plot.graph(percent)
-                .line(plot.series(|frame| frame.cpu), Tone::Primary),
+                .line(plot.series(|frame| frame.cpu), Tone::Primary)
+                .named("Utilization")
+                .readout(as_percent),
         ),
         card(
             "Memory",
             format!("{:.0}%", at.memory),
             plot.graph(percent)
-                .line(plot.series(|frame| frame.memory), Tone::Primary),
+                .line(plot.series(|frame| frame.memory), Tone::Primary)
+                .named("In use")
+                .readout(as_percent),
         ),
     ];
     for (index, name) in trace.header.disks.iter().enumerate() {
@@ -512,10 +515,13 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
                     plot.series(|frame| level(frame.disks[index].read)),
                     Tone::Success,
                 )
+                .named("Read")
                 .line(
                     plot.series(|frame| level(frame.disks[index].write)),
                     Tone::Warning,
-                ),
+                )
+                .named("Write")
+                .readout(as_rate),
         ));
     }
     for (index, name) in trace.header.interfaces.iter().enumerate() {
@@ -532,10 +538,13 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
                     plot.series(|frame| level(frame.interfaces[index].receive)),
                     Tone::Success,
                 )
+                .named("Receive")
                 .line(
                     plot.series(|frame| level(frame.interfaces[index].send)),
                     Tone::Warning,
-                ),
+                )
+                .named("Send")
+                .readout(as_rate),
         ));
     }
     for (index, name) in trace.header.gpus.iter().enumerate() {
@@ -544,7 +553,10 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
             format!("{:.0}%", at.gpus[index].busy),
             plot.graph(percent)
                 .line(plot.series(|frame| frame.gpus[index].busy), Tone::Primary)
-                .line(plot.series(|frame| frame.gpus[index].memory), Tone::Warning),
+                .named("Utilization")
+                .line(plot.series(|frame| frame.gpus[index].memory), Tone::Warning)
+                .named("Video memory")
+                .readout(as_percent),
         ));
     }
     cards.extend(sensor_card(replay, &plot));
@@ -556,6 +568,7 @@ fn sensor_card<'a>(replay: &'a Replay, plot: &Plot<'_>) -> Option<Element<'a, Me
     let (trace, index) = (&replay.trace, replay.sensor);
     let channel = trace.header.sensors.get(index)?;
     let options = sensor_options(trace);
+    let unit = channel.unit.clone();
     Some(
         column![
             pick_list(
@@ -572,7 +585,9 @@ fn sensor_card<'a>(replay: &'a Replay, plot: &Plot<'_>) -> Option<Element<'a, Me
                     channel.unit
                 ),
                 plot.graph(Scale::Fit { floor: 10.0 })
-                    .line(plot.series(|frame| frame.sensors[index]), Tone::Primary),
+                    .line(plot.series(|frame| frame.sensors[index]), Tone::Primary)
+                    .named(channel.label.clone())
+                    .readout(move |value| format!("{value:.1} {unit}")),
             ),
         ]
         .width(430)
@@ -588,7 +603,7 @@ fn card<'a>(title: &str, current: String, graph: Graph) -> Element<'a, Message> 
                 space::horizontal(),
                 text(current).style(text::secondary)
             ],
-            container(graph.view()).height(90),
+            container(graph.view()).height(LABELLED_HEIGHT),
         ]
         .spacing(6),
     )

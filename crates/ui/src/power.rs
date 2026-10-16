@@ -4,7 +4,7 @@ use peepers_core::sensors::{Chip, Kind, Reading};
 use peepers_core::telemetry::Vitals;
 
 use crate::format;
-use crate::graph::{Graph, Scale, Tone};
+use crate::graph::{Graph, Scale, Tone, as_frequency};
 use crate::history::History;
 use crate::settings::Temperature;
 
@@ -62,6 +62,8 @@ fn processor<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a,
             container(
                 Graph::new(Scale::Fit { floor: 1_000_000.0 })
                     .line(line, Tone::Primary)
+                    .named("Average clock")
+                    .readout(as_frequency)
                     .view()
             )
             .width(240)
@@ -167,6 +169,7 @@ fn reading_row<'a, Message: 'a>(
         .fold((f32::MAX, f32::MIN), |(low, high), &value| {
             (low.min(value), high.max(value))
         });
+    let kind = reading.kind;
     row![
         text(reading.label.clone()).width(200),
         text(format::sensor(reading, unit)).width(130),
@@ -182,6 +185,8 @@ fn reading_row<'a, Message: 'a>(
                 floor: floor(reading.kind)
             })
             .line(values, Tone::Primary)
+            .named(reading.label.clone())
+            .readout(move |value| format::sensor_value(kind, value, unit))
             .view()
         )
         .width(240)
