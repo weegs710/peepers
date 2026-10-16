@@ -60,6 +60,7 @@ fn main() -> iced::Result {
         .title(|_: &Peepers, _| "peepers".to_owned())
         .subscription(Peepers::subscription)
         .theme(Peepers::theme)
+        .scale_factor(|app, _| app.preferences.settings.scale())
         .run()
 }
 

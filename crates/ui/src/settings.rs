@@ -2,10 +2,11 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use iced::widget::{checkbox, column, pick_list, row, text};
+use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
 use iced::{Element, Task, Theme};
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +48,13 @@ impl fmt::Display for Temperature {
 }
 
 const CONTROL: u32 = 200;
+
+/// The text sizes the interface can be scaled to, in pixels: below the least the smallest captions
+/// would be unreadable, and above the most the pages no longer fit a window.
+const TEXT_SIZES: RangeInclusive<u8> = 12..=24;
+const TEXT_STEP: u8 = 2;
+/// The size the interface is drawn at without any scaling.
+const TEXT_DEFAULT: u8 = 16;
 
 /// How often the machine is read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +110,9 @@ pub struct Settings {
     pub temperature: Temperature,
     pub interval: Interval,
     pub tray: bool,
+    /// The size body text is drawn at; everything else, graph lines and labels included, scales
+    /// with it.
+    text_size: u8,
 }
 
 impl Default for Settings {
@@ -112,6 +123,7 @@ impl Default for Settings {
             temperature: Temperature::Celsius,
             interval: Interval::Second,
             tray: true,
+            text_size: TEXT_DEFAULT,
         }
     }
 }
@@ -130,7 +142,9 @@ impl Settings {
     /// Fails when the file exists but cannot be read or parsed.
     pub fn load() -> Result<Self, String> {
         match fs::read_to_string(Self::path()) {
-            Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string()),
+            Ok(text) => serde_json::from_str(&text)
+                .map(Self::normalised)
+                .map_err(|error| error.to_string()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error.to_string()),
         }
@@ -150,6 +164,21 @@ impl Settings {
         fs::rename(partial, path)
     }
 
+    /// The text size moved onto the nearest notch inside the allowed range, so a hand-edited file
+    /// cannot make the interface unusable.
+    fn normalised(mut self) -> Self {
+        let (least, most) = (*TEXT_SIZES.start(), *TEXT_SIZES.end());
+        let notches = self.text_size.clamp(least, most) - least;
+        let snapped = (notches + TEXT_STEP / 2) / TEXT_STEP * TEXT_STEP;
+        self.text_size = (least + snapped).min(most);
+        self
+    }
+
+    /// How much larger or smaller than the default the interface is drawn.
+    pub fn scale(&self) -> f32 {
+        f32::from(self.text_size) / f32::from(TEXT_DEFAULT)
+    }
+
     /// The saved theme, or the default dark one when the name is not one this version knows.
     pub fn theme(&self) -> Theme {
         Theme::ALL
@@ -167,6 +196,10 @@ pub enum Message {
     Temperature(Temperature),
     Interval(Interval),
     Tray(bool),
+    /// The slider is being dragged: only the preview follows, so the slider does not move under
+    /// the pointer.
+    TextSizeDragged(u8),
+    TextSizeChosen,
     Saved(Result<(), String>),
 }
 
@@ -174,6 +207,8 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Preferences {
     pub settings: Settings,
+    /// The text size under the pointer while the slider is held.
+    dragging: Option<u8>,
     notice: Option<(String, bool)>,
 }
 
@@ -183,10 +218,12 @@ impl Preferences {
         match Settings::load() {
             Ok(settings) => Self {
                 settings,
+                dragging: None,
                 notice: None,
             },
             Err(error) => Self {
                 settings: Settings::default(),
+                dragging: None,
                 notice: Some((
                     format!(
                         "The settings file could not be read, so the defaults are in use: {error}"
@@ -204,6 +241,15 @@ impl Preferences {
             Message::Temperature(temperature) => self.settings.temperature = temperature,
             Message::Interval(interval) => self.settings.interval = interval,
             Message::Tray(on) => self.settings.tray = on,
+            Message::TextSizeDragged(size) => {
+                self.dragging = Some(size);
+                return Task::none();
+            }
+            Message::TextSizeChosen => {
+                if let Some(size) = self.dragging.take() {
+                    self.settings.text_size = size;
+                }
+            }
             Message::Saved(result) => {
                 self.notice = result
                     .err()
@@ -251,6 +297,23 @@ impl Preferences {
                 )
                 .width(CONTROL)
             ),
+            setting(
+                "Text size",
+                row![
+                    slider(
+                        TEXT_SIZES,
+                        self.dragging.unwrap_or(self.settings.text_size),
+                        Message::TextSizeDragged
+                    )
+                    .step(TEXT_STEP)
+                    .on_release(Message::TextSizeChosen)
+                    .width(CONTROL),
+                    text(self.dragging.unwrap_or(self.settings.text_size).to_string()),
+                ]
+                .spacing(12)
+                .align_y(iced::Center)
+            ),
+            self.preview(),
             checkbox(self.settings.tray)
                 .label("Show a tray icon with the processor and memory load")
                 .on_toggle(Message::Tray),
@@ -266,6 +329,32 @@ impl Preferences {
         }))
         .spacing(16)
         .padding(16)
+        .into()
+    }
+}
+
+impl Preferences {
+    /// Sample text at the size being chosen, which is drawn in the units of the size in use now.
+    fn preview(&self) -> Element<'_, Message> {
+        let ratio = f32::from(self.dragging.unwrap_or(self.settings.text_size))
+            / f32::from(self.settings.text_size);
+        let size = |base: f32| base * ratio;
+        container(
+            column![
+                text("Peepers").size(size(24.0)),
+                text("Processes, performance and every other page read like this.")
+                    .size(size(16.0)),
+                text("Captions and the small figures beside them read like this.")
+                    .size(size(12.0))
+                    .style(text::secondary),
+                text("100%   75%   50%   25%   the scale down the side of a graph")
+                    .size(size(11.0))
+                    .style(text::secondary),
+            ]
+            .spacing(size(6.0)),
+        )
+        .padding(12)
+        .style(container::bordered_box)
         .into()
     }
 }
@@ -288,6 +377,46 @@ mod tests {
     fn fahrenheit_converts_from_celsius() {
         assert!((Temperature::Fahrenheit.convert(100.0) - 212.0).abs() < f32::EPSILON);
         assert!((Temperature::Celsius.convert(37.5) - 37.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_default_size_leaves_the_interface_as_drawn() {
+        assert!((Settings::default().scale() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_text_size_is_moved_onto_a_notch_inside_the_range() {
+        let size = |text_size| {
+            Settings {
+                text_size,
+                ..Settings::default()
+            }
+            .normalised()
+            .text_size
+        };
+        assert_eq!(size(0), 12);
+        assert_eq!(size(11), 12);
+        assert_eq!(size(13), 14);
+        assert_eq!(size(15), 16);
+        assert_eq!(size(16), 16);
+        assert_eq!(size(23), 24);
+        assert_eq!(size(200), 24);
+    }
+
+    #[test]
+    fn an_old_file_without_a_text_size_keeps_the_default() {
+        let settings: Settings = serde_json::from_str(r#"{"temperature": "Fahrenheit"}"#).unwrap();
+        assert_eq!(settings.text_size, TEXT_DEFAULT);
+    }
+
+    #[test]
+    fn dragging_only_previews_and_letting_go_applies() {
+        let mut preferences = Preferences::default();
+        drop(preferences.update(Message::TextSizeDragged(22)));
+        assert_eq!(preferences.settings.text_size, TEXT_DEFAULT);
+        drop(preferences.update(Message::TextSizeChosen));
+        assert_eq!(preferences.settings.text_size, 22);
+        assert!(preferences.dragging.is_none());
     }
 
     #[test]
