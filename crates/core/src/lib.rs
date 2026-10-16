@@ -7,10 +7,12 @@ pub mod network;
 pub mod power;
 pub mod pressure;
 pub mod process;
+pub mod scan;
 pub mod sensors;
 pub mod system;
 pub mod telemetry;
 pub mod users;
+pub mod volumes;
 
 mod math;
 mod pci;
