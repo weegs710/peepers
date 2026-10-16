@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, checkbox, column, row, scrollable, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
 use iced::{Element, Fill, Right, Subscription, Task};
 use peepers_core::drivers::{self, Driver, State};
 
 use crate::blocking;
 use crate::format;
-use crate::widgets::stats;
+use crate::widgets::{scrolling, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
 
@@ -111,7 +111,7 @@ impl Drivers {
 
         column![
             toolbar,
-            scrollable(table(columns, rows).padding_x(10).padding_y(2))
+            scrolling(table(columns, rows).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill)
         ]

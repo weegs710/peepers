@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, checkbox, column, row, scrollable, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
 
 use crate::blocking;
-use crate::widgets::stats;
+use crate::widgets::{scrolling, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
 
@@ -140,7 +140,7 @@ impl Services {
 
         column![
             toolbar,
-            scrollable(table(columns, rows).padding_x(10).padding_y(2))
+            scrolling(table(columns, rows).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill)
         ]

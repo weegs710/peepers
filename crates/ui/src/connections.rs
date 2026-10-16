@@ -2,15 +2,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{
-    button, checkbox, column, pick_list, row, scrollable, space, table, text, text_input,
-};
+use iced::widget::{button, checkbox, column, pick_list, row, space, table, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::connections::{self, Connection, Endpoint, Exposure, Protocol, State};
 
 use crate::blocking;
 use crate::processes::Processes;
-use crate::widgets::stats;
+use crate::widgets::{scrolling, stats};
 
 const REFRESH: Duration = Duration::from_secs(2);
 
@@ -145,7 +143,7 @@ impl Connections {
 
         column![
             toolbar,
-            scrollable(table(columns, rows).padding_x(10).padding_y(2))
+            scrolling(table(columns, rows).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill)
         ]

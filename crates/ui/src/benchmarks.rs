@@ -17,6 +17,7 @@ use peepers_core::bench::{Event, Gpu, History, Job, Loaded, Outcome, Record, Run
 use crate::blocking;
 use crate::format;
 use crate::gpu_bench;
+use crate::widgets::scrolling;
 
 const POLL: Duration = Duration::from_millis(100);
 
@@ -406,7 +407,7 @@ impl Benchmarks {
                     .style(button::secondary)
             ]
             .align_y(iced::Center),
-            scrollable(
+            scrolling(
                 table(columns, self.history.records())
                     .padding_x(10)
                     .padding_y(2)

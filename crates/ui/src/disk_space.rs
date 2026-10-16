@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{
-    button, column, container, progress_bar, row, scrollable, space, table, text, text_input,
-};
+use iced::widget::{button, column, container, progress_bar, row, space, table, text, text_input};
 use iced::{Element, Fill, Length, Right, Subscription, Task};
 use peepers_core::scan::{Progress, Report, Scan};
 use peepers_core::volumes::{self, Volume};
@@ -12,6 +10,7 @@ use peepers_core::volumes::{self, Volume};
 use crate::blocking;
 use crate::format;
 use crate::graph::level;
+use crate::widgets::scrolling;
 
 const POLL: Duration = Duration::from_millis(250);
 
@@ -145,7 +144,7 @@ impl DiskSpace {
         .align_y(iced::Center);
 
         column![
-            scrollable(volumes).height(Length::FillPortion(2)),
+            scrolling(volumes).height(Length::FillPortion(2)),
             toolbar,
             self.results()
         ]
@@ -196,7 +195,7 @@ impl DiskSpace {
             ]
             .spacing(8),
             text(summary).style(text::secondary),
-            container(scrollable(self.list(report)).height(Fill)).height(Length::FillPortion(3)),
+            container(scrolling(self.list(report)).height(Fill)).height(Length::FillPortion(3)),
         ]
         .spacing(8)
         .into()

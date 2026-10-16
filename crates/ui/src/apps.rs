@@ -1,10 +1,10 @@
-use iced::widget::{button, checkbox, column, row, scrollable, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
 use iced::{Element, Fill, Task};
 use peepers_core::apps::{self, App, Scope};
 
 use crate::blocking;
 use crate::format;
-use crate::widgets::stats;
+use crate::widgets::{scrolling, stats};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -95,7 +95,7 @@ impl Apps {
 
         column![
             toolbar,
-            scrollable(table(columns, rows).padding_x(10).padding_y(2))
+            scrolling(table(columns, rows).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill)
         ]

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, column, row, scrollable, space, table, text};
+use iced::widget::{button, column, row, space, table, text};
 use iced::{Element, Fill, Right, Subscription, Task};
 use peepers_core::process::Process;
 use peepers_core::sessions::{self, Action, Session};
@@ -10,6 +10,7 @@ use peepers_core::sessions::{self, Action, Session};
 use crate::blocking;
 use crate::format;
 use crate::processes::Processes;
+use crate::widgets::scrolling;
 
 const REFRESH: Duration = Duration::from_secs(5);
 
@@ -162,7 +163,7 @@ impl Users {
         });
 
         column![
-            scrollable(table(columns, rows).padding_x(10).padding_y(2))
+            scrolling(table(columns, rows).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill)
         ]

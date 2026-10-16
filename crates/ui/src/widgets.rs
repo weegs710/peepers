@@ -1,9 +1,19 @@
-use iced::widget::{column, container, row, space, text};
+use iced::widget::{Scrollable, column, container, row, scrollable, space, text};
 use iced::{Element, Fill, Length};
 
 use peepers_core::telemetry::Vitals;
 
 use crate::graph::Graph;
+
+/// Space kept between a scrollbar and the content, so the bar never covers the last column.
+const SCROLLBAR_GAP: f32 = 6.0;
+
+/// A scrollable whose bar has a strip of its own instead of floating over the content.
+pub fn scrolling<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> Scrollable<'a, Message> {
+    scrollable(content).spacing(SCROLLBAR_GAP)
+}
 
 /// A caption above a value.
 pub fn stat<'a, Message: 'a>(

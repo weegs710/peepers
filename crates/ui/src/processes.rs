@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use iced::widget::{button, checkbox, column, row, scrollable, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
 use iced::{Element, Fill, Right, Task};
 use peepers_core::process::{self, Details, Observation, Process, Signal};
 use peepers_core::telemetry::Sample;
@@ -16,6 +16,7 @@ use peepers_core::users::Users;
 
 use self::panel::{Panel, Priority};
 use self::rows::Row;
+use crate::widgets::scrolling;
 use crate::{blocking, format, storage};
 
 /// Long enough for a thread that works in bursts to show up.
@@ -328,7 +329,7 @@ impl Processes {
         column![toolbar]
             .extend(self.notice.as_ref().map(notice))
             .push(
-                scrollable(table(columns, rows).padding_x(10).padding_y(2))
+                scrolling(table(columns, rows).padding_x(10).padding_y(2))
                     .width(Fill)
                     .height(Fill),
             )

@@ -1,9 +1,10 @@
-use iced::widget::{button, column, row, scrollable, space, table, text};
+use iced::widget::{button, column, row, space, table, text};
 use iced::{Element, Fill, Task};
 use peepers_core::startup::{self, Scope, Startup};
 
 use crate::blocking;
 use crate::format;
+use crate::widgets::scrolling;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -75,7 +76,7 @@ impl StartupApps {
                 text(format!("{} startup apps", entries.len())).style(text::secondary)
             ]
             .padding(8),
-            scrollable(table(columns, entries).padding_x(10).padding_y(2))
+            scrolling(table(columns, entries).padding_x(10).padding_y(2))
                 .width(Fill)
                 .height(Fill),
         ]
