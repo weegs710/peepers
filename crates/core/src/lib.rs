@@ -20,6 +20,7 @@ pub mod system;
 pub mod systemd;
 pub mod telemetry;
 pub mod trace;
+pub mod tray;
 pub mod users;
 pub mod volumes;
 
