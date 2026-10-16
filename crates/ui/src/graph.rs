@@ -1,8 +1,24 @@
 use iced::mouse;
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
+use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
 use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Theme};
 
 use crate::history::CAPACITY;
+
+/// How far a line's glow reaches, as a share of the graph's height and at most this many pixels, so
+/// that the glow of a short graph does not swamp the line.
+const REACH: f32 = 0.12;
+const REACH_MAX: f32 = 14.0;
+/// The glow is soft discs stamped along the line, which fade out evenly and cannot sprout the
+/// shards that one very wide stroke leaves at a sharp turn. Each layer is a radius at full reach and
+/// the strength it adds up to where its stamps overlap; the widest comes first.
+const LAYERS: [(f32, f32); 3] = [(14.0, 0.105), (9.0, 0.11), (5.0, 0.155)];
+/// Stamps sit this many radii apart, so each layer is the same few stamps deep along the line.
+const SPACING: f32 = 0.5;
+/// A layer narrower than this many pixels would be lost in the line itself, so it is skipped.
+const RADIUS_MIN: f32 = 2.5;
+/// The closest stamps ever sit, in pixels, so that a small graph does not pay for fine spacing it
+/// cannot show.
+const SPACING_MIN: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Tone {
@@ -141,10 +157,8 @@ impl<Message> canvas::Program<Message> for Graph {
                 builder.close();
             });
             frame.fill(&area, color.scale_alpha(0.18));
-            frame.stroke(
-                &outline,
-                Stroke::default().with_width(1.5).with_color(color),
-            );
+            glow(&mut frame, &points, color, height);
+            frame.stroke(&outline, round(1.5, lighten(color, 0.35)));
         }
         if let Some(fraction) = self.marker {
             let x = width * fraction;
@@ -156,6 +170,54 @@ impl<Message> canvas::Program<Message> for Graph {
         }
         vec![frame.into_geometry()]
     }
+}
+
+fn lighten(color: Color, amount: f32) -> Color {
+    let toward_white = |channel: f32| channel + (1.0 - channel) * amount;
+    Color {
+        r: toward_white(color.r),
+        g: toward_white(color.g),
+        b: toward_white(color.b),
+        a: color.a,
+    }
+}
+
+fn glow(frame: &mut Frame, points: &[Point], color: Color, height: f32) {
+    let reach = (height * REACH).clamp(2.0, REACH_MAX) / REACH_MAX;
+    for (full, total) in LAYERS {
+        let radius = full * reach;
+        if radius < RADIUS_MIN {
+            continue;
+        }
+        let spacing = (radius * SPACING).max(SPACING_MIN);
+        // Overlapping translucent stamps add up, so each is only the share that sums to `total`.
+        let stamp = 1.0 - (1.0 - total).powf(spacing / (2.0 * radius));
+        let mut disc = |at: Point| frame.fill(&Path::circle(at, radius), color.scale_alpha(stamp));
+        for pair in points.windows(2) {
+            let length = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+            let stamps = (length / spacing).ceil().max(1.0);
+            let mut done = 0.0;
+            while done < stamps {
+                let along = done / stamps;
+                disc(Point::new(
+                    pair[0].x + (pair[1].x - pair[0].x) * along,
+                    pair[0].y + (pair[1].y - pair[0].y) * along,
+                ));
+                done += 1.0;
+            }
+        }
+        if let Some(&last) = points.last() {
+            disc(last);
+        }
+    }
+}
+
+fn round(width: f32, color: Color) -> Stroke<'static> {
+    Stroke::default()
+        .with_width(width)
+        .with_color(color)
+        .with_line_cap(LineCap::Round)
+        .with_line_join(LineJoin::Round)
 }
 
 #[expect(

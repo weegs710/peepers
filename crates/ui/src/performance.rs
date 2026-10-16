@@ -4,7 +4,8 @@ mod gpu;
 mod memory;
 mod network;
 
-use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::widget::text::Wrapping;
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Fill};
 use peepers_core::cpu::Info;
 use peepers_core::network::Kind;
@@ -50,7 +51,13 @@ struct Card {
 impl Card {
     fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
         column![
-            row![text(self.title), space::horizontal(), text(self.value)],
+            row![
+                container(text(self.title).wrapping(Wrapping::None))
+                    .width(Fill)
+                    .clip(true),
+                text(self.value).wrapping(Wrapping::None),
+            ]
+            .spacing(8),
             container(self.graph.view()).height(40),
         ]
         .spacing(6)
