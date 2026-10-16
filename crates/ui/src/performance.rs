@@ -47,6 +47,40 @@ struct Card {
     graph: Graph,
 }
 
+impl Card {
+    fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
+        column![
+            row![text(self.title), space::horizontal(), text(self.value)],
+            container(self.graph.view()).height(40),
+        ]
+        .spacing(6)
+        .into()
+    }
+}
+
+fn waiting<'a, Message: 'a>() -> Element<'a, Message> {
+    container(text("Waiting for the first sample").style(text::secondary))
+        .center(Fill)
+        .into()
+}
+
+/// Every device's card in a column, for a window that only watches.
+pub fn glance<'a, Message: 'a>(history: &History) -> Element<'a, Message> {
+    let Some(latest) = history.latest() else {
+        return waiting();
+    };
+    scrollable(
+        column(
+            devices(latest)
+                .iter()
+                .map(|device| device.card(history).view()),
+        )
+        .spacing(16)
+        .padding(12),
+    )
+    .into()
+}
+
 pub struct Performance {
     selected: Device,
     cpu: Info,
@@ -70,9 +104,7 @@ impl Performance {
 
     pub fn view<'a>(&'a self, history: &History, unit: Temperature) -> Element<'a, Message> {
         let Some(latest) = history.latest() else {
-            return container(text("Waiting for the first sample").style(text::secondary))
-                .center(Fill)
-                .into();
+            return waiting();
         };
         let devices = devices(latest);
         let selected = if devices.contains(&self.selected) {
@@ -82,13 +114,7 @@ impl Performance {
         };
 
         let list = devices.iter().map(|device| {
-            let card = device.card(history);
-            let content = column![
-                row![text(card.title), space::horizontal(), text(card.value)],
-                container(card.graph.view()).height(40),
-            ]
-            .spacing(6);
-            button(content)
+            button(device.card(history).view())
                 .width(Fill)
                 .on_press(Message::Select(device.clone()))
                 .style(if device == selected {

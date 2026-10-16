@@ -14,9 +14,10 @@ pub(super) const INTERFACE: &str = "com.canonical.dbusmenu";
 pub(super) const ROOT: i32 = 0;
 
 const WINDOW: i32 = 1;
-const PAUSE: i32 = 2;
-const SEPARATOR: i32 = 3;
-const QUIT: i32 = 4;
+const POPOUT: i32 = 2;
+const PAUSE: i32 = 3;
+const SEPARATOR: i32 = 4;
+const QUIT: i32 = 5;
 
 /// What a click in the tray asks of the application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub enum Event {
     Activate,
     /// The menu's first entry: show the window if it is hidden, hide it if it is shown.
     Window,
+    /// Open the popout window of live gauges, or close it when it is open.
+    Popout,
     Pause,
     Quit,
 }
@@ -36,6 +39,7 @@ type Layout = (i32, Properties, Vec<Value<'static>>);
 /// The context menu a tray host draws, over the `dbusmenu` protocol.
 pub(super) struct Menu {
     pub(super) window_open: bool,
+    pub(super) popout_open: bool,
     pub(super) paused: bool,
     /// Tells the host the layout changed, so it asks for it again.
     pub(super) revision: u32,
@@ -47,7 +51,7 @@ fn labelled(label: &'static str) -> Properties {
 }
 
 impl Menu {
-    fn entries(&self) -> [(i32, Properties); 4] {
+    fn entries(&self) -> [(i32, Properties); 5] {
         [
             (
                 WINDOW,
@@ -55,6 +59,14 @@ impl Menu {
                     "Hide to tray"
                 } else {
                     "Show peepers"
+                }),
+            ),
+            (
+                POPOUT,
+                labelled(if self.popout_open {
+                    "Close popout"
+                } else {
+                    "Open popout"
                 }),
             ),
             (
@@ -135,6 +147,7 @@ impl Menu {
     fn event(&self, id: i32, event_id: &str, _data: Value<'_>, _timestamp: u32) {
         let event = match (event_id, id) {
             ("clicked", WINDOW) => Event::Window,
+            ("clicked", POPOUT) => Event::Popout,
             ("clicked", PAUSE) => Event::Pause,
             ("clicked", QUIT) => Event::Quit,
             _ => return,
@@ -149,11 +162,12 @@ mod tests {
 
     use super::*;
 
-    fn menu(window_open: bool, paused: bool) -> (Menu, Receiver<Event>) {
+    fn menu(window_open: bool, popout_open: bool, paused: bool) -> (Menu, Receiver<Event>) {
         let (events, clicks) = mpsc::channel();
         (
             Menu {
                 window_open,
+                popout_open,
                 paused,
                 revision: 7,
                 events,
@@ -169,15 +183,15 @@ mod tests {
     }
 
     #[test]
-    fn the_root_lists_four_items_under_the_current_revision() {
-        let (menu, _clicks) = menu(true, false);
+    fn the_root_lists_five_items_under_the_current_revision() {
+        let (menu, _clicks) = menu(true, false, false);
         let (revision, (id, _, children)) = menu.get_layout(ROOT, -1, Vec::new());
-        assert_eq!((revision, id, children.len()), (7, ROOT, 4));
+        assert_eq!((revision, id, children.len()), (7, ROOT, 5));
     }
 
     #[test]
     fn labels_follow_the_state() {
-        let (open, _clicks) = menu(true, true);
+        let (open, _clicks) = menu(true, true, true);
         let labels: Vec<_> = open
             .get_group_properties(Vec::new(), Vec::new())
             .iter()
@@ -187,19 +201,21 @@ mod tests {
             labels,
             [
                 Some("Hide to tray".to_owned()),
+                Some("Close popout".to_owned()),
                 Some("Resume updates".to_owned()),
                 None,
                 Some("Quit peepers".to_owned()),
             ]
         );
-        let (hidden, _clicks) = menu(false, false);
-        let toggle = hidden.get_group_properties(vec![WINDOW], Vec::new());
-        assert_eq!(label(&toggle[0].1).as_deref(), Some("Show peepers"));
+        let (hidden, _clicks) = menu(false, false, false);
+        let toggles = hidden.get_group_properties(vec![WINDOW, POPOUT], Vec::new());
+        assert_eq!(label(&toggles[0].1).as_deref(), Some("Show peepers"));
+        assert_eq!(label(&toggles[1].1).as_deref(), Some("Open popout"));
     }
 
     #[test]
     fn an_item_is_a_subtree_without_children() {
-        let (menu, _clicks) = menu(true, false);
+        let (menu, _clicks) = menu(true, false, false);
         let (_, (id, properties, children)) = menu.get_layout(QUIT, 0, Vec::new());
         assert_eq!(id, QUIT);
         assert_eq!(label(&properties).as_deref(), Some("Quit peepers"));
@@ -208,15 +224,20 @@ mod tests {
 
     #[test]
     fn clicks_become_events_and_nothing_else_does() {
-        let (menu, clicks) = menu(true, false);
-        for (id, kind) in [(WINDOW, "clicked"), (PAUSE, "clicked"), (QUIT, "clicked")] {
+        let (menu, clicks) = menu(true, false, false);
+        for (id, kind) in [
+            (WINDOW, "clicked"),
+            (POPOUT, "clicked"),
+            (PAUSE, "clicked"),
+            (QUIT, "clicked"),
+        ] {
             menu.event(id, kind, Value::from(0_i32), 0);
         }
         menu.event(PAUSE, "hovered", Value::from(0_i32), 0);
         menu.event(SEPARATOR, "clicked", Value::from(0_i32), 0);
         assert_eq!(
             clicks.try_iter().collect::<Vec<_>>(),
-            [Event::Window, Event::Pause, Event::Quit]
+            [Event::Window, Event::Popout, Event::Pause, Event::Quit]
         );
     }
 }

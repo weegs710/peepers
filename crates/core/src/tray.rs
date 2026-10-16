@@ -105,6 +105,7 @@ impl Item {
 struct State {
     gauges: Gauges,
     window_open: bool,
+    popout_open: bool,
     paused: bool,
 }
 
@@ -166,6 +167,7 @@ impl Tray {
                     menu::PATH,
                     Menu {
                         window_open: false,
+                        popout_open: false,
                         paused: false,
                         revision: 0,
                         events: clicks,
@@ -209,6 +211,11 @@ impl Tray {
         self.change(|state| state.window_open = open);
     }
 
+    /// Whether the popout is open, which the menu's second entry offers to reverse.
+    pub fn set_popout_open(&self, open: bool) {
+        self.change(|state| state.popout_open = open);
+    }
+
     pub fn set_paused(&self, paused: bool) {
         self.change(|state| state.paused = paused);
     }
@@ -240,11 +247,13 @@ fn publish(connection: &Connection, state: &Mutex<State>, woken: &Receiver<()>) 
         }
         let icon = now.gauges.pixmap() != shown.gauges.pixmap();
         let tooltip = now.gauges.to_string() != shown.gauges.to_string();
-        let entries = (now.window_open, now.paused) != (shown.window_open, shown.paused);
+        let entries = (now.window_open, now.popout_open, now.paused)
+            != (shown.window_open, shown.popout_open, shown.paused);
         item.get_mut().gauges = now.gauges;
         let revision = {
             let mut menu = menu.get_mut();
             menu.window_open = now.window_open;
+            menu.popout_open = now.popout_open;
             menu.paused = now.paused;
             if entries {
                 menu.revision += 1;
@@ -358,11 +367,11 @@ mod tests {
             reply
         };
         let (before, (_, _, children)) = layout(false);
-        assert_eq!(children.len(), 4);
+        assert_eq!(children.len(), 5);
         let (after, _) = layout(true);
         assert_eq!(after, before + 1);
 
-        menu.call_method("Event", &(2_i32, "clicked", Value::from(0_i32), 0_u32))
+        menu.call_method("Event", &(3_i32, "clicked", Value::from(0_i32), 0_u32))
             .unwrap();
         assert_eq!(events.recv(), Some(Event::Pause));
 

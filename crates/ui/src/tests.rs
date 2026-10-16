@@ -9,6 +9,7 @@ use peepers_core::telemetry::Sampler;
 use super::*;
 
 const WINDOW: Size = Size::new(1280.0, 800.0);
+const POPOUT: Size = Size::new(300.0, 560.0);
 
 fn ui(app: &Peepers) -> Simulator<'_, Message> {
     Simulator::with_size(
@@ -18,6 +19,13 @@ fn ui(app: &Peepers) -> Simulator<'_, Message> {
     )
 }
 
+/// The popout as it looks once it is open.
+fn popout(app: &mut Peepers) -> Simulator<'_, Message> {
+    update(app, Message::TogglePopout);
+    let id = app.windows.popout.id().unwrap();
+    Simulator::with_size(iced::Settings::default(), POPOUT, app.view(id))
+}
+
 /// Applies a message, dropping the task it asks for: tests have no runtime to run it.
 fn update(app: &mut Peepers, message: Message) {
     drop(app.update(message));
@@ -25,7 +33,7 @@ fn update(app: &mut Peepers, message: Message) {
 
 fn sampled() -> Peepers {
     let mut app = Peepers::default();
-    drop(app.window.open::<Message>());
+    drop(app.windows.main.open::<Message>());
     let mut sampler = Sampler::default();
     for _ in 0..30 {
         update(
@@ -161,6 +169,36 @@ fn pausing_holds_the_pages_while_samples_keep_arriving() {
     assert_ne!(app.history.latest().cloned(), held);
 }
 
+#[test]
+fn the_popout_lists_every_device_and_nothing_else() {
+    let mut app = sampled();
+    let mut ui = popout(&mut app);
+    assert!(ui.find("CPU").is_ok() && ui.find("Memory").is_ok());
+    assert!(ui.find("Processes").is_err());
+}
+
+#[test]
+fn the_rail_opens_and_closes_the_popout() {
+    let mut app = sampled();
+    click(&mut app, "Open popout");
+    assert!(app.windows.popout.is_open());
+    assert!(ui(&app).find("Close popout").is_ok());
+}
+
+#[test]
+fn the_popout_keeps_the_history_going_with_the_main_window_closed() {
+    let mut app = sampled();
+    update(&mut app, Message::TogglePopout);
+    let main = app.windows.main.id().unwrap();
+    update(&mut app, Message::Window(window::Event::Closed(main)));
+    let before = app.history.series(|_| 0.0).len();
+    update(
+        &mut app,
+        Message::Sampled(Arc::new(Sampler::default().sample().unwrap())),
+    );
+    assert_eq!(app.history.series(|_| 0.0).len(), before + 1);
+}
+
 fn recording(frames: usize) -> peepers_core::trace::Trace {
     let vitals = Sampler::default().sample().unwrap().vitals;
     let mut recorder = peepers_core::trace::Recorder::start(&vitals);
@@ -283,6 +321,12 @@ fn render_pages() {
                 .unwrap()
         );
     }
+    let snapshot = popout(&mut app).snapshot(&Theme::Dark).unwrap();
+    assert!(
+        snapshot
+            .matches_image(format!("{directory}/Popout"))
+            .unwrap()
+    );
     update(&mut app, Message::Navigate(Page::Benchmarks));
     for section in [
         benchmarks::Section::Gpu,

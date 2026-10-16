@@ -66,6 +66,12 @@ impl Indicator {
         }
     }
 
+    pub fn set_popout_open(&self, open: bool) {
+        if let Some(tray) = &self.tray {
+            tray.set_popout_open(open);
+        }
+    }
+
     pub fn set_paused(&self, paused: bool) {
         if let Some(tray) = &self.tray {
             tray.set_paused(paused);

@@ -52,7 +52,7 @@ use crate::settings::Preferences;
 use crate::startup::StartupApps;
 use crate::tray::Indicator;
 use crate::users::Users;
-use crate::window::Window;
+use crate::window::Windows;
 
 fn main() -> iced::Result {
     iced::daemon(Peepers::new, Peepers::update, Peepers::view)
@@ -80,7 +80,7 @@ struct Peepers {
     users: Users,
     info: Info,
     preferences: Preferences,
-    window: Window,
+    windows: Windows,
     tray: Indicator,
     /// Whether new samples are kept from the pages, so what is on screen holds still.
     paused: bool,
@@ -173,6 +173,7 @@ enum Message {
     Tray(tray::Message),
     Window(window::Event),
     TogglePause,
+    TogglePopout,
 }
 
 impl Peepers {
@@ -183,7 +184,7 @@ impl Peepers {
             preferences,
             ..Self::default()
         };
-        let window = app.window.open();
+        let window = app.windows.main.open();
         let tray = app.sync_tray();
         (app, Task::batch([window, tray]))
     }
@@ -195,10 +196,10 @@ impl Peepers {
             .tray
             .sync(self.preferences.settings.tray)
             .map(Message::Tray);
-        if self.tray.is_active() || self.window.is_open() {
+        if self.tray.is_active() || self.windows.main.is_open() {
             tray
         } else {
-            Task::batch([tray, self.window.open()])
+            Task::batch([tray, self.windows.main.open()])
         }
     }
 
@@ -212,8 +213,11 @@ impl Peepers {
                 self.failure = None;
                 self.flight.record(&sample.vitals);
                 self.tray.show(Gauges::from(&sample.vitals));
-                if !self.paused && self.window.is_open() {
-                    self.processes.replace(&sample);
+                let main = self.windows.main.is_open();
+                if !self.paused && (main || self.windows.popout.is_open()) {
+                    if main {
+                        self.processes.replace(&sample);
+                    }
                     self.history.push(sample.vitals.clone());
                 }
             }
@@ -221,6 +225,11 @@ impl Peepers {
             Message::TogglePause => {
                 self.paused = !self.paused;
                 self.tray.set_paused(self.paused);
+            }
+            Message::TogglePopout => {
+                let task = self.windows.popout.toggle();
+                self.tray.set_popout_open(self.windows.popout.is_open());
+                return task;
             }
             Message::Navigate(page) => {
                 self.page = page;
@@ -259,19 +268,23 @@ impl Peepers {
             }
             Message::Tray(tray::Message::Started(result)) => {
                 self.tray.started(result, self.preferences.settings.tray);
-                self.tray.set_window_open(self.window.is_open());
+                self.tray.set_window_open(self.windows.main.is_open());
+                self.tray.set_popout_open(self.windows.popout.is_open());
                 self.tray.set_paused(self.paused);
             }
             Message::Tray(tray::Message::Clicked(click)) => match click {
-                Click::Activate => return self.window.activate(),
-                Click::Window => return self.window.toggle(),
+                Click::Activate => return self.windows.main.activate(),
+                Click::Window => return self.windows.main.toggle(),
+                Click::Popout => return self.update(Message::TogglePopout),
                 Click::Pause => return self.update(Message::TogglePause),
                 Click::Quit => return iced::exit(),
             },
             Message::Window(event) => {
-                let task = self.window.update(event, self.tray.is_active());
-                self.tray.set_window_open(self.window.is_open());
-                return task;
+                let main = self.windows.main.update(event, self.tray.is_active());
+                let popout = self.windows.popout.update(event, true);
+                self.tray.set_window_open(self.windows.main.is_open());
+                self.tray.set_popout_open(self.windows.popout.is_open());
+                return Task::batch([main, popout]);
             }
         }
         Task::none()
@@ -323,7 +336,10 @@ impl Peepers {
         ])
     }
 
-    fn view(&self, _window: iced::window::Id) -> Element<'_, Message> {
+    fn view(&self, window: iced::window::Id) -> Element<'_, Message> {
+        if self.windows.popout.owns(window) {
+            return performance::glance(&self.history);
+        }
         let pages = column(Page::ALL.map(|page| {
             button(page.label())
                 .width(Fill)
@@ -349,14 +365,25 @@ impl Peepers {
         } else {
             button::secondary
         });
-        let rail = column![scrollable(pages).height(Fill), container(pause).padding(8)]
-            .extend(self.history.latest().map(widgets::disk_lights))
-            .extend(
-                self.flight
-                    .status()
-                    .map(|status| text(status).size(12).style(text::danger).into()),
-            )
-            .width(180);
+        let popout = button(if self.windows.popout.is_open() {
+            "Close popout"
+        } else {
+            "Open popout"
+        })
+        .width(Fill)
+        .on_press(Message::TogglePopout)
+        .style(button::secondary);
+        let rail = column![
+            scrollable(pages).height(Fill),
+            container(column![pause, popout].spacing(4)).padding(8)
+        ]
+        .extend(self.history.latest().map(widgets::disk_lights))
+        .extend(
+            self.flight
+                .status()
+                .map(|status| text(status).size(12).style(text::danger).into()),
+        )
+        .width(180);
         let content = match self.page {
             Page::Processes => self.processes.view().map(Message::Processes),
             Page::Performance => self
