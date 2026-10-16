@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use iced::alignment::Vertical;
@@ -33,6 +36,7 @@ const RADIUS_MIN: f32 = 2.5;
 /// The closest stamps ever sit, in pixels, so that a small graph does not pay for fine spacing it
 /// cannot show.
 const SPACING_MIN: f32 = 2.0;
+const SIDES: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Tone {
@@ -194,19 +198,64 @@ impl Graph {
     }
 }
 
-impl<Message> canvas::Program<Message> for Graph {
-    type State = ();
+/// What a graph keeps between redraws: its finished picture, and what the picture was drawn from.
+#[derive(Default)]
+pub struct Drawn {
+    picture: canvas::Cache,
+    from: Cell<Option<u64>>,
+}
 
+impl<Message> canvas::Program<Message> for Graph {
+    type State = Drawn;
+
+    /// The glow is hundreds of discs to tessellate, and a window is redrawn for any pointer move
+    /// over it, so the picture is only made again when what it shows has changed.
     fn draw(
         &self,
-        (): &(),
+        drawn: &Drawn,
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let (width, height) = (bounds.width, bounds.height);
+        let fingerprint = self.fingerprint(theme);
+        if drawn.from.replace(Some(fingerprint)) != Some(fingerprint) {
+            drawn.picture.clear();
+        }
+        vec![
+            drawn
+                .picture
+                .draw(renderer, bounds.size(), |frame| self.paint(frame, theme)),
+        ]
+    }
+}
+
+impl Graph {
+    /// Everything but the size, which the cache already tells apart, that changes the picture.
+    fn fingerprint(&self, theme: &Theme) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        theme.to_string().hash(&mut hasher);
+        match self.scale {
+            Scale::Fixed(ceiling) => (0_u8, ceiling.to_bits()),
+            Scale::Fit { floor } => (1, floor.to_bits()),
+        }
+        .hash(&mut hasher);
+        self.span.hash(&mut hasher);
+        self.marker.map(f32::to_bits).hash(&mut hasher);
+        self.readout
+            .map(|readout| readout as usize)
+            .hash(&mut hasher);
+        for line in &self.lines {
+            std::mem::discriminant(&line.tone).hash(&mut hasher);
+            for value in &line.values {
+                value.map(f32::to_bits).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    fn paint(&self, frame: &mut Frame, theme: &Theme) {
+        let (width, height) = (frame.width(), frame.height());
         let grid = Stroke::default().with_width(1.0).with_color(
             theme
                 .extended_palette()
@@ -222,11 +271,11 @@ impl<Message> canvas::Program<Message> for Graph {
 
         let ceiling = self.ceiling().max(f32::EPSILON);
         if let Some(readout) = self.readout.filter(|_| height >= AXIS_MIN_HEIGHT) {
-            scale(&mut frame, theme, height, |share| readout(ceiling * share));
+            scale(frame, theme, height, |share| readout(ceiling * share));
         }
         for line in &self.lines {
             let color = line.tone.color(theme);
-            for points in segments(&line.values, self.span, ceiling, bounds.size()) {
+            for points in segments(&line.values, self.span, ceiling, frame.size()) {
                 let (Some(first), Some(last)) = (points.first(), points.last()) else {
                     continue;
                 };
@@ -245,7 +294,7 @@ impl<Message> canvas::Program<Message> for Graph {
                     builder.close();
                 });
                 frame.fill(&area, color.scale_alpha(0.18));
-                glow(&mut frame, &points, color, height);
+                glow(frame, &points, color, height);
                 frame.stroke(&outline, round(1.5, lighten(color, 0.35)));
             }
         }
@@ -257,7 +306,6 @@ impl<Message> canvas::Program<Message> for Graph {
                 Stroke::default().with_width(1.0).with_color(color),
             );
         }
-        vec![frame.into_geometry()]
     }
 }
 
@@ -332,7 +380,7 @@ fn glow(frame: &mut Frame, points: &[Point], color: Color, height: f32) {
         let spacing = (radius * SPACING).max(SPACING_MIN);
         // Overlapping translucent stamps add up, so each is only the share that sums to `total`.
         let stamp = 1.0 - (1.0 - total).powf(spacing / (2.0 * radius));
-        let mut disc = |at: Point| frame.fill(&Path::circle(at, radius), color.scale_alpha(stamp));
+        let mut disc = |at: Point| frame.fill(&polygon(at, radius), color.scale_alpha(stamp));
         for pair in points.windows(2) {
             let length = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
             let stamps = (length / spacing).ceil().max(1.0);
@@ -350,6 +398,25 @@ fn glow(frame: &mut Frame, points: &[Point], color: Color, height: f32) {
             disc(last);
         }
     }
+}
+
+/// A stamp of the glow: few sides are enough, since the overlap of many stamps hides them.
+fn polygon(centre: Point, radius: f32) -> Path {
+    Path::new(|builder| {
+        for side in 0..SIDES {
+            let angle = std::f32::consts::TAU * along(side, SIDES);
+            let corner = Point::new(
+                centre.x + radius * angle.cos(),
+                centre.y + radius * angle.sin(),
+            );
+            if side == 0 {
+                builder.move_to(corner);
+            } else {
+                builder.line_to(corner);
+            }
+        }
+        builder.close();
+    })
 }
 
 fn round(width: f32, color: Color) -> Stroke<'static> {
@@ -406,6 +473,57 @@ pub fn decimate(values: &[f32], buckets: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cpu(values: Vec<f32>) -> Graph {
+        Graph::new(Scale::Fixed(100.0)).line(values, Tone::Primary)
+    }
+
+    #[test]
+    fn the_same_picture_has_the_same_fingerprint() {
+        let dark = Theme::Dark;
+        assert_eq!(
+            cpu(vec![1.0, 2.0]).fingerprint(&dark),
+            cpu(vec![1.0, 2.0]).fingerprint(&dark)
+        );
+    }
+
+    #[test]
+    fn anything_that_changes_the_picture_changes_the_fingerprint() {
+        let dark = Theme::Dark;
+        let base = cpu(vec![1.0, 2.0]).fingerprint(&dark);
+        assert_ne!(base, cpu(vec![1.0, 2.5]).fingerprint(&dark));
+        assert_ne!(base, cpu(vec![1.0, 2.0, 3.0]).fingerprint(&dark));
+        assert_ne!(base, cpu(vec![1.0, 2.0]).fingerprint(&Theme::Light));
+        assert_ne!(base, cpu(vec![1.0, 2.0]).marker(0.5).fingerprint(&dark));
+        assert_ne!(base, cpu(vec![1.0, 2.0]).span(10).fingerprint(&dark));
+        assert_ne!(
+            base,
+            cpu(vec![1.0, 2.0]).readout(as_percent).fingerprint(&dark)
+        );
+        assert_ne!(
+            base,
+            Graph::new(Scale::Fit { floor: 100.0 })
+                .line(vec![1.0, 2.0], Tone::Primary)
+                .fingerprint(&dark)
+        );
+        assert_ne!(
+            base,
+            Graph::new(Scale::Fixed(100.0))
+                .line(vec![1.0, 2.0], Tone::Warning)
+                .fingerprint(&dark)
+        );
+    }
+
+    #[test]
+    fn a_gap_is_not_a_zero() {
+        let dark = Theme::Dark;
+        let gap =
+            Graph::new(Scale::Fixed(100.0)).optional_line(vec![Some(1.0), None], Tone::Primary);
+        assert_ne!(
+            gap.fingerprint(&dark),
+            cpu(vec![1.0, 0.0]).fingerprint(&dark)
+        );
+    }
 
     #[test]
     fn only_named_lines_are_listed_with_their_newest_value() {
