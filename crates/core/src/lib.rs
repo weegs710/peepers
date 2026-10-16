@@ -10,6 +10,7 @@ pub mod network;
 pub mod power;
 pub mod pressure;
 pub mod process;
+pub mod report;
 pub mod scan;
 pub mod sensors;
 pub mod sessions;
