@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod bench;
 pub mod connections;
 pub mod cpu;
 pub mod disk;
