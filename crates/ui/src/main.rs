@@ -29,9 +29,10 @@ mod tests;
 
 use std::fmt;
 use std::io::ErrorKind;
+use std::iter;
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Element, Fill, Subscription, Task, Theme};
 use peepers_core::telemetry::Sample;
 use peepers_core::tray::{Event as Click, Gauges};
@@ -107,6 +108,32 @@ enum Page {
 }
 
 impl Page {
+    /// The rail's sections, named for what the user does in them, in the order the rail shows them.
+    const SECTIONS: [(&'static str, &'static [Self]); 5] = [
+        (
+            "WATCH",
+            &[
+                Self::Processes,
+                Self::Performance,
+                Self::Pressure,
+                Self::Power,
+            ],
+        ),
+        ("RECORD", &[Self::Flight, Self::Benchmarks]),
+        (
+            "INSPECT",
+            &[
+                Self::Connections,
+                Self::Drivers,
+                Self::DiskSpace,
+                Self::Apps,
+                Self::Info,
+            ],
+        ),
+        ("MANAGE", &[Self::Services, Self::Startup, Self::Users]),
+        ("PEEPERS", &[Self::Settings]),
+    ];
+
     const ALL: [Self; 15] = [
         Self::Processes,
         Self::Performance,
@@ -116,12 +143,12 @@ impl Page {
         Self::Benchmarks,
         Self::Connections,
         Self::Drivers,
-        Self::Services,
         Self::DiskSpace,
         Self::Apps,
+        Self::Info,
+        Self::Services,
         Self::Startup,
         Self::Users,
-        Self::Info,
         Self::Settings,
     ];
 
@@ -340,16 +367,18 @@ impl Peepers {
         if self.windows.popout.owns(window) {
             return performance::glance(&self.history);
         }
-        let pages = column(Page::ALL.map(|page| {
-            button(page.label())
-                .width(Fill)
-                .on_press(Message::Navigate(page))
-                .style(if page == self.page {
-                    button::primary
-                } else {
-                    button::text
-                })
-                .into()
+        let pages = column(Page::SECTIONS.iter().flat_map(|&(title, pages)| {
+            iter::once(heading(title)).chain(pages.iter().map(|&page| {
+                button(page.label())
+                    .width(Fill)
+                    .on_press(Message::Navigate(page))
+                    .style(if page == self.page {
+                        button::primary
+                    } else {
+                        button::text
+                    })
+                    .into()
+            }))
         }))
         .spacing(4)
         .padding(8);
@@ -425,4 +454,18 @@ impl Peepers {
             )
             .into()
     }
+}
+
+/// A rail section's name with a rule running on from it to the edge.
+fn heading(title: &str) -> Element<'_, Message> {
+    container(
+        row![
+            text(title).size(11).style(text::secondary),
+            rule::horizontal(1)
+        ]
+        .spacing(6)
+        .align_y(iced::Center),
+    )
+    .padding(iced::Padding::ZERO.top(8))
+    .into()
 }

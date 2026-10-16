@@ -54,6 +54,24 @@ fn click(app: &mut Peepers, target: &str) {
 }
 
 #[test]
+fn the_sections_hold_every_page_once_in_the_order_of_the_full_list() {
+    let shown: Vec<Page> = Page::SECTIONS
+        .iter()
+        .flat_map(|(_, pages)| pages.iter().copied())
+        .collect();
+    assert_eq!(shown, Page::ALL);
+}
+
+#[test]
+fn the_rail_names_what_each_group_of_pages_is_for() {
+    let app = sampled();
+    let mut ui = ui(&app);
+    for (title, _) in Page::SECTIONS {
+        assert!(ui.find(title).is_ok(), "{title}");
+    }
+}
+
+#[test]
 fn the_rail_switches_pages() {
     let mut app = sampled();
     click(&mut app, "Performance");
