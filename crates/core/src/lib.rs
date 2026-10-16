@@ -9,6 +9,7 @@ pub mod pressure;
 pub mod process;
 pub mod sensors;
 pub mod system;
+pub mod telemetry;
 pub mod users;
 
 mod math;
