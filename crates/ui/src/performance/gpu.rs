@@ -5,7 +5,7 @@ use peepers_core::telemetry::Vitals;
 
 use super::Card;
 use crate::format;
-use crate::graph::{Graph, Scale, Tone};
+use crate::graph::{Graph, Scale, Tone, as_percent};
 use crate::history::History;
 use crate::settings::Temperature;
 use crate::widgets::{detail, stats};
@@ -96,7 +96,10 @@ fn graph(history: &History, name: &str) -> Graph {
     });
     Graph::new(Scale::Fixed(100.0))
         .optional_line(utilization, Tone::Primary)
+        .named("Utilization")
         .optional_line(memory, Tone::Warning)
+        .named("Video memory")
+        .readout(as_percent)
 }
 
 fn pool_ratio(pool: Pool) -> f32 {

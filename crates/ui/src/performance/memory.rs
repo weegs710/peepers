@@ -3,7 +3,7 @@ use peepers_core::telemetry::Vitals;
 
 use super::Card;
 use crate::format;
-use crate::graph::{Graph, Scale, Tone};
+use crate::graph::{Graph, Scale, Tone, as_percent};
 use crate::history::History;
 use crate::widgets::{detail, stats};
 
@@ -69,8 +69,11 @@ pub fn view<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a, 
 }
 
 fn graph(history: &History) -> Graph {
-    Graph::new(Scale::Fixed(100.0)).line(
-        history.series(|vitals| vitals.memory.used_percent()),
-        Tone::Primary,
-    )
+    Graph::new(Scale::Fixed(100.0))
+        .line(
+            history.series(|vitals| vitals.memory.used_percent()),
+            Tone::Primary,
+        )
+        .named("In use")
+        .readout(as_percent)
 }

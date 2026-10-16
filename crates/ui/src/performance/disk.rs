@@ -7,7 +7,7 @@ use peepers_core::telemetry::Vitals;
 
 use super::Card;
 use crate::format;
-use crate::graph::{Graph, Scale, Tone, level};
+use crate::graph::{Graph, Scale, Tone, as_percent, as_rate, level};
 use crate::history::History;
 use crate::settings::Temperature;
 use crate::widgets::{detail, stats};
@@ -22,7 +22,10 @@ pub fn card(history: &History, name: &str) -> Card {
     Card {
         title: format!("Disk {name}"),
         value: format!("{active:.0}%"),
-        graph: Graph::new(Scale::Fixed(100.0)).line(history.series(active_of(name)), Tone::Primary),
+        graph: Graph::new(Scale::Fixed(100.0))
+            .line(history.series(active_of(name)), Tone::Primary)
+            .named("Active time")
+            .readout(as_percent),
     }
 }
 
@@ -41,10 +44,13 @@ pub fn view<'a, Message: 'a>(
             history.series(rate_of(name, |disk| disk.read_per_second)),
             Tone::Success,
         )
+        .named("Read")
         .line(
             history.series(rate_of(name, |disk| disk.write_per_second)),
             Tone::Warning,
-        );
+        )
+        .named("Write")
+        .readout(as_rate);
     let temperature = disk
         .sensors
         .iter()

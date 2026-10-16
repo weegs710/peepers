@@ -5,7 +5,7 @@ use peepers_core::telemetry::Vitals;
 
 use super::Card;
 use crate::format;
-use crate::graph::{Graph, Scale, Tone, level};
+use crate::graph::{Graph, Scale, Tone, as_rate, level};
 use crate::history::History;
 use crate::widgets::{detail, stats};
 
@@ -91,7 +91,10 @@ fn graph(history: &History, name: &str) -> Graph {
             rate(|interface| interface.receive_per_second),
             Tone::Success,
         )
+        .named("Receive")
         .line(rate(|interface| interface.send_per_second), Tone::Warning)
+        .named("Send")
+        .readout(as_rate)
 }
 
 fn find<'a>(vitals: &'a Vitals, name: &str) -> Option<&'a Interface> {

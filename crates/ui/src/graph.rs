@@ -1,8 +1,22 @@
+use std::time::Duration;
+
+use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
+use iced::widget::{column, container, row, space, text, tooltip};
 use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme};
 
+use crate::format;
 use crate::history::CAPACITY;
+
+/// A graph shorter than this carries no scale: the labels would crowd the line they describe.
+const AXIS_MIN_HEIGHT: f32 = 120.0;
+const AXIS_TEXT: f32 = 11.0;
+const AXIS_INSET: f32 = 4.0;
+
+/// How long the pointer rests on a graph before its tooltip shows, so one passing over does not
+/// flash it.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(400);
 
 /// How far a line's glow reaches, as a share of the graph's height and at most this many pixels, so
 /// that the glow of a short graph does not swamp the line.
@@ -47,15 +61,26 @@ pub enum Scale {
     },
 }
 
+#[derive(Debug)]
+struct Line {
+    values: Vec<Option<f32>>,
+    tone: Tone,
+    /// What the line shows, which the tooltip tells next to its newest value.
+    name: Option<String>,
+}
+
 /// A scrolling line graph; the newest value is at the right edge.
 #[derive(Debug)]
 pub struct Graph {
     scale: Scale,
-    lines: Vec<(Vec<Option<f32>>, Tone)>,
+    lines: Vec<Line>,
     /// How many values fit across the width.
     span: usize,
     /// Where to draw a vertical cursor, as a fraction of the width.
     marker: Option<f32>,
+    /// How a value is written, in the tooltip and on the scale; a graph without one has neither
+    /// scale labels nor a unit to give them.
+    readout: Option<fn(f32) -> String>,
 }
 
 impl Graph {
@@ -65,6 +90,7 @@ impl Graph {
             lines: Vec::new(),
             span: CAPACITY,
             marker: None,
+            readout: None,
         }
     }
 
@@ -78,20 +104,81 @@ impl Graph {
         self
     }
 
-    pub fn line(mut self, values: Vec<f32>, tone: Tone) -> Self {
-        self.lines
-            .push((values.into_iter().map(Some).collect(), tone));
-        self
+    pub fn line(self, values: Vec<f32>, tone: Tone) -> Self {
+        self.optional_line(values.into_iter().map(Some).collect(), tone)
     }
 
     /// Missing readings leave gaps, keeping the time axis without inventing zeroes.
     pub fn optional_line(mut self, values: Vec<Option<f32>>, tone: Tone) -> Self {
-        self.lines.push((values, tone));
+        self.lines.push(Line {
+            values,
+            tone,
+            name: None,
+        });
+        self
+    }
+
+    /// Names the line added last. Hovering a graph with named lines lists them with their newest
+    /// values, so a graph with two lines of one colour family says which is which.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        if let Some(line) = self.lines.last_mut() {
+            line.name = Some(name.into());
+        }
+        self
+    }
+
+    /// How a value is written, which also labels the scale on a graph tall enough to carry it.
+    pub fn readout(mut self, readout: fn(f32) -> String) -> Self {
+        self.readout = Some(readout);
         self
     }
 
     pub fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
-        iced::widget::canvas(self).width(Fill).height(Fill).into()
+        let legend = self.legend();
+        let graph = iced::widget::canvas(self).width(Fill).height(Fill);
+        match legend {
+            Some(legend) => tooltip(graph, legend, tooltip::Position::FollowCursor)
+                .delay(TOOLTIP_DELAY)
+                .padding(8)
+                .style(container::bordered_box)
+                .into(),
+            None => graph.into(),
+        }
+    }
+
+    /// One row per named line: its colour, its name and its newest value.
+    fn legend<'a, Message: 'a>(&self) -> Option<Element<'a, Message>> {
+        let rows: Vec<Element<'a, Message>> = self
+            .entries()
+            .into_iter()
+            .map(|(tone, name, value)| {
+                row![
+                    text("●").style(move |theme: &Theme| text::Style {
+                        color: Some(tone.color(theme)),
+                    }),
+                    text(name),
+                    space::horizontal(),
+                    text(value),
+                ]
+                .spacing(8)
+                .into()
+            })
+            .collect();
+        (!rows.is_empty()).then(|| column(rows).spacing(2).width(200).into())
+    }
+
+    fn entries(&self) -> Vec<(Tone, String, String)> {
+        self.lines
+            .iter()
+            .filter_map(|line| {
+                let newest = line.values.last().copied().flatten();
+                Some((
+                    line.tone,
+                    line.name.clone()?,
+                    newest.map_or_else(format::unavailable, self.readout.unwrap_or(plain)),
+                ))
+            })
+            .collect()
     }
 
     fn ceiling(&self) -> f32 {
@@ -100,7 +187,7 @@ impl Graph {
             Scale::Fit { floor } => self
                 .lines
                 .iter()
-                .flat_map(|(values, _)| values)
+                .flat_map(|line| &line.values)
                 .flatten()
                 .fold(floor, |peak, &value| peak.max(value)),
         }
@@ -134,9 +221,12 @@ impl<Message> canvas::Program<Message> for Graph {
         }
 
         let ceiling = self.ceiling().max(f32::EPSILON);
-        for (values, tone) in &self.lines {
-            let color = tone.color(theme);
-            for points in segments(values, self.span, ceiling, bounds.size()) {
+        if let Some(readout) = self.readout.filter(|_| height >= AXIS_MIN_HEIGHT) {
+            scale(&mut frame, theme, height, |share| readout(ceiling * share));
+        }
+        for line in &self.lines {
+            let color = line.tone.color(theme);
+            for points in segments(&line.values, self.span, ceiling, bounds.size()) {
                 let (Some(first), Some(last)) = (points.first(), points.last()) else {
                     continue;
                 };
@@ -171,6 +261,32 @@ impl<Message> canvas::Program<Message> for Graph {
     }
 }
 
+/// Writes the value each gridline stands for, and the ceiling at the top, down the left edge.
+fn scale(frame: &mut Frame, theme: &Theme, height: f32, label: impl Fn(f32) -> String) {
+    let color = theme
+        .extended_palette()
+        .background
+        .base
+        .text
+        .scale_alpha(0.55);
+    for quarter in 0..4 {
+        let y = height * along(quarter, 4);
+        let (position, align_y) = if quarter == 0 {
+            (Point::new(AXIS_INSET, AXIS_INSET), Vertical::Top)
+        } else {
+            (Point::new(AXIS_INSET, y - AXIS_INSET), Vertical::Bottom)
+        };
+        frame.fill_text(canvas::Text {
+            content: label(1.0 - along(quarter, 4)),
+            position,
+            color,
+            size: AXIS_TEXT.into(),
+            align_y,
+            ..canvas::Text::default()
+        });
+    }
+}
+
 /// Separate paths at missing samples while retaining their positions on the time axis.
 fn segments(values: &[Option<f32>], span: usize, ceiling: f32, size: Size) -> Vec<Vec<Point>> {
     let newest = values.len().saturating_sub(1);
@@ -190,6 +306,10 @@ fn segments(values: &[Option<f32>], span: usize, ceiling: f32, size: Size) -> Ve
         segments.push(segment);
     }
     segments
+}
+
+fn plain(value: f32) -> String {
+    format!("{value:.0}")
 }
 
 fn lighten(color: Color, amount: f32) -> Color {
@@ -248,6 +368,21 @@ fn along(index: usize, span: usize) -> f32 {
     index as f32 / span as f32
 }
 
+/// A graph value that is a share, written as a percentage.
+pub fn as_percent(value: f32) -> String {
+    format!("{value:.0}%")
+}
+
+/// A graph value that is a rate in bytes per second.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a rate is never negative and graph values need display precision only"
+)]
+pub fn as_rate(value: f32) -> String {
+    format::rate(value.max(0.0) as u64)
+}
+
 /// A counter or rate as a graph value.
 #[expect(
     clippy::cast_precision_loss,
@@ -271,6 +406,41 @@ pub fn decimate(values: &[f32], buckets: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_named_lines_are_listed_with_their_newest_value() {
+        let graph = Graph::new(Scale::Fixed(100.0))
+            .line(vec![10.0, 42.4], Tone::Primary)
+            .named("Utilization")
+            .line(vec![1.0], Tone::Warning)
+            .optional_line(vec![Some(5.0), None], Tone::Success)
+            .named("Video memory")
+            .readout(as_percent);
+        let entries: Vec<(String, String)> = graph
+            .entries()
+            .into_iter()
+            .map(|(_, name, value)| (name, value))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("Utilization".to_owned(), "42%".to_owned()),
+                ("Video memory".to_owned(), "n/a".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_graph_with_no_names_has_no_tooltip() {
+        let graph = Graph::new(Scale::Fixed(100.0)).line(vec![1.0], Tone::Primary);
+        assert!(graph.entries().is_empty());
+    }
+
+    #[test]
+    fn rates_read_in_bytes_and_never_below_zero() {
+        assert_eq!(as_rate(1_048_576.0), "1.0 MiB/s");
+        assert_eq!(as_rate(-5.0), "0 B/s");
+    }
 
     #[test]
     fn missing_readings_leave_gaps_without_shifting_time_or_hiding_real_zeroes() {
