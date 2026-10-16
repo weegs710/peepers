@@ -1,3 +1,4 @@
+pub mod apps;
 pub mod connections;
 pub mod cpu;
 pub mod disk;
@@ -11,11 +12,13 @@ pub mod pressure;
 pub mod process;
 pub mod scan;
 pub mod sensors;
+pub mod startup;
 pub mod system;
 pub mod telemetry;
 pub mod users;
 pub mod volumes;
 
+mod desktop;
 mod math;
 mod pci;
 mod stat;

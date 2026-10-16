@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Simple
+Exec=simple %U
+Icon=simple
+Categories=Utility;
