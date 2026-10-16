@@ -4,13 +4,18 @@ mod gpu;
 mod memory;
 mod network;
 
+use std::collections::HashMap;
+
 use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, scrollable, text};
-use iced::{Element, Fill};
+use iced::{Element, Fill, Task};
 use peepers_core::cpu::Info;
+use peepers_core::disk::Kind as Drive;
+use peepers_core::health::{self, Health};
 use peepers_core::network::Kind;
 use peepers_core::telemetry::Vitals;
 
+use crate::blocking;
 use crate::graph::Graph;
 use crate::history::History;
 use crate::settings::Temperature;
@@ -39,6 +44,7 @@ impl Device {
 #[derive(Debug, Clone)]
 pub enum Message {
     Select(Device),
+    Health(String, Result<Health, String>),
 }
 
 /// What the device list shows for one device.
@@ -91,6 +97,8 @@ pub fn glance<'a, Message: 'a>(history: &History) -> Element<'a, Message> {
 pub struct Performance {
     selected: Device,
     cpu: Info,
+    /// Each disk's health as last read, or why it could not be.
+    health: HashMap<String, Result<Health, String>>,
 }
 
 impl Default for Performance {
@@ -98,14 +106,35 @@ impl Default for Performance {
         Self {
             selected: Device::Cpu,
             cpu: Info::read(),
+            health: HashMap::new(),
         }
     }
 }
 
 impl Performance {
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message, history: &History) -> Task<Message> {
         match message {
-            Message::Select(device) => self.selected = device,
+            Message::Select(device) => {
+                let task = match &device {
+                    Device::Disk(name) => {
+                        disk_kind(history, name).map_or_else(Task::none, |kind| {
+                            let name = name.clone();
+                            blocking::run(move || {
+                                let result = health::read(&name, kind);
+                                (name, result)
+                            })
+                            .map(|(name, result)| Message::Health(name, result))
+                        })
+                    }
+                    _ => Task::none(),
+                };
+                self.selected = device;
+                task
+            }
+            Message::Health(name, result) => {
+                self.health.insert(name, result);
+                Task::none()
+            }
         }
     }
 
@@ -149,11 +178,20 @@ impl Performance {
         match device {
             Device::Cpu => cpu::view(history, latest, &self.cpu),
             Device::Memory => memory::view(history, latest),
-            Device::Disk(name) => disk::view(history, latest, name, unit),
+            Device::Disk(name) => disk::view(history, latest, name, unit, self.health.get(name)),
             Device::Network(name) => network::view(history, latest, name),
             Device::Gpu(name) => gpu::view(history, latest, name, unit),
         }
     }
+}
+
+fn disk_kind(history: &History, name: &str) -> Option<Drive> {
+    history
+        .latest()?
+        .disks
+        .iter()
+        .find(|disk| disk.name == name)
+        .map(|disk| disk.kind)
 }
 
 fn devices(vitals: &Vitals) -> Vec<Device> {

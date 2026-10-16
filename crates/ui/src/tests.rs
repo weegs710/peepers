@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use iced::{Size, Theme};
 use iced_test::Simulator;
+use peepers_core::health::{Ata, Health, Nvme};
 use peepers_core::telemetry::Sampler;
 
 use super::*;
@@ -294,6 +295,118 @@ fn a_failed_load_says_why() {
     assert!(ui(&app).find("The recording is not valid data.").is_ok());
 }
 
+/// The first `NVMe` disk of this machine opened on the Performance page, if it has one.
+fn nvme_disk() -> Option<(Peepers, String)> {
+    let mut app = sampled();
+    let name = app
+        .history
+        .latest()?
+        .disks
+        .iter()
+        .find(|disk| disk.kind == peepers_core::disk::Kind::Nvme)?
+        .name
+        .clone();
+    update(&mut app, Message::Navigate(Page::Performance));
+    update(
+        &mut app,
+        Message::Performance(performance::Message::Select(performance::Device::Disk(
+            name.clone(),
+        ))),
+    );
+    Some((app, name))
+}
+
+fn health(percent_used: u8, media_errors: u64) -> Health {
+    Health::Nvme(Nvme {
+        percent_used,
+        spare: 100,
+        spare_threshold: 10,
+        bytes_read: Some(13_935_985_664_000),
+        bytes_written: Some(27_993_332_736_000),
+        power_on_hours: 425,
+        power_cycles: 623,
+        unsafe_shutdowns: 71,
+        media_errors,
+        warnings: Vec::new(),
+    })
+}
+
+fn sata_health(bad_sectors: u64) -> Health {
+    Health::Ata(Ata {
+        failing: false,
+        attributes_failing: Some(0),
+        attributes_failed_before: Some(1),
+        bad_sectors: Some(bad_sectors),
+        power_on_hours: Some(12_000),
+        self_test: "success".to_owned(),
+    })
+}
+
+fn report(app: &mut Peepers, name: &str, result: Result<Health, String>) {
+    update(
+        app,
+        Message::Performance(performance::Message::Health(name.to_owned(), result)),
+    );
+}
+
+#[test]
+fn an_nvme_disk_shows_its_health() {
+    let Some((mut app, name)) = nvme_disk() else {
+        return;
+    };
+    assert!(ui(&app).find("Reading the drive's health").is_ok());
+    report(&mut app, &name, Ok(health(2, 0)));
+    let mut ui = ui(&app);
+    assert!(ui.find("No problems reported").is_ok());
+    assert!(ui.find("2% used").is_ok());
+    assert!(ui.find("Unsafe shutdowns").is_ok());
+}
+
+#[test]
+fn a_worn_drive_says_what_is_wrong() {
+    let Some((mut app, name)) = nvme_disk() else {
+        return;
+    };
+    report(&mut app, &name, Ok(health(96, 4)));
+    let mut ui = ui(&app);
+    assert!(
+        ui.find("4 media errors, 96% of its rated endurance is used")
+            .is_ok()
+    );
+    assert!(ui.find("No problems reported").is_err());
+}
+
+#[test]
+fn a_sata_drive_shows_its_smart_summary() {
+    let Some((mut app, name)) = nvme_disk() else {
+        return;
+    };
+    report(&mut app, &name, Ok(sata_health(0)));
+    {
+        let mut view = ui(&app);
+        assert!(view.find("No problems reported").is_ok());
+        assert!(view.find("12000 hours").is_ok());
+        assert!(view.find("Bad sectors").is_ok());
+        assert!(view.find("Last self-test").is_ok());
+    }
+
+    report(&mut app, &name, Ok(sata_health(8)));
+    assert!(ui(&app).find("8 bad sectors").is_ok());
+}
+
+#[test]
+fn a_drive_that_cannot_be_read_says_why() {
+    let Some((mut app, name)) = nvme_disk() else {
+        return;
+    };
+    report(&mut app, &name, Err("udisks is not running".to_owned()));
+    assert!(
+        ui(&app)
+            .find("Health unavailable: udisks is not running")
+            .is_ok()
+    );
+}
+
 #[test]
 #[ignore = "writes PNGs for visual review into the directory named by PEEPERS_SHOTS"]
 fn render_pages() {
@@ -364,6 +477,7 @@ fn render_pages() {
         );
     }
     render_recordings(&mut app, &directory);
+    render_health(&directory);
     let snapshot = popout(&mut app).snapshot(&Theme::Dark).unwrap();
     assert!(
         snapshot
@@ -384,6 +498,31 @@ fn render_pages() {
         assert!(
             snapshot
                 .matches_image(format!("{directory}/Benchmarks-{section:?}"))
+                .unwrap()
+        );
+    }
+}
+
+/// The disk page of an `NVMe` drive in good health, in trouble, and with no reading.
+fn render_health(directory: &str) {
+    let readings = [
+        ("Health-Good", Ok(health(2, 0))),
+        ("Health-Worn", Ok(health(96, 4))),
+        ("Health-Sata", Ok(sata_health(8))),
+        (
+            "Health-Unavailable",
+            Err("udisks is not running".to_owned()),
+        ),
+    ];
+    for (file, result) in readings {
+        let Some((mut app, name)) = nvme_disk() else {
+            return;
+        };
+        report(&mut app, &name, result);
+        let snapshot = ui(&app).snapshot(&Theme::Dark).unwrap();
+        assert!(
+            snapshot
+                .matches_image(format!("{directory}/{file}"))
                 .unwrap()
         );
     }

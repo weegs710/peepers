@@ -265,7 +265,12 @@ impl Peepers {
             Message::Processes(message) => {
                 return self.processes.update(message).map(Message::Processes);
             }
-            Message::Performance(message) => self.performance.update(message),
+            Message::Performance(message) => {
+                return self
+                    .performance
+                    .update(message, &self.history)
+                    .map(Message::Performance);
+            }
             Message::Connections(message) => {
                 return self.connections.update(message).map(Message::Connections);
             }
