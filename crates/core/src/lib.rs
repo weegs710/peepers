@@ -4,6 +4,7 @@ pub mod format;
 pub mod gpu;
 pub mod memory;
 pub mod network;
+pub mod power;
 pub mod pressure;
 pub mod process;
 pub mod sensors;
