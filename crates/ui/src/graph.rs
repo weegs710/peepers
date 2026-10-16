@@ -8,7 +8,7 @@ use std::time::Duration;
 use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
-use iced::widget::{column, container, row, space, text, tooltip};
+use iced::widget::{container, text, tooltip};
 use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme};
 
 use crate::format;
@@ -24,6 +24,14 @@ const AXIS_INSET: f32 = 4.0;
 /// How long the pointer rests on a graph before its tooltip shows, so one passing over does not
 /// flash it.
 const TOOLTIP_DELAY: Duration = Duration::from_millis(400);
+/// The tooltip's rows: how wide the whole is, how tall and how large the text of each, and the
+/// radius of the dot that gives a line's colour.
+const LEGEND_WIDTH: f32 = 220.0;
+const LEGEND_ROW: f32 = 24.0;
+const LEGEND_TEXT: f32 = 16.0;
+const LEGEND_DOT: f32 = 4.0;
+/// The radius of the dot where the pointer's moment meets a line.
+const MARK_DOT: f32 = 3.5;
 
 /// How far a line's glow reaches, as a share of the graph's height and at most this many pixels, so
 /// that the glow of a short graph does not swamp the line.
@@ -85,6 +93,14 @@ struct Readout(Rc<dyn Fn(f32) -> String>);
 impl fmt::Debug for Readout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Readout").finish_non_exhaustive()
+    }
+}
+
+impl Line {
+    /// The reading `back` samples before the newest, if there was one.
+    fn at(&self, back: usize) -> Option<f32> {
+        let index = self.values.len().checked_sub(back + 1)?;
+        self.values[index].filter(|value| value.is_finite())
     }
 }
 
@@ -153,48 +169,40 @@ impl Graph {
     }
 
     pub fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
-        let legend = self.legend();
-        let graph = iced::widget::canvas(self).width(Fill).height(Fill);
-        match legend {
-            Some(legend) => tooltip(graph, legend, tooltip::Position::FollowCursor)
-                .delay(TOOLTIP_DELAY)
-                .padding(8)
-                .style(container::bordered_box)
-                .into(),
-            None => graph.into(),
+        let named = self.lines.iter().filter(|line| line.name.is_some()).count();
+        let graph = Rc::new(self);
+        let hover = Hover::default();
+        let plot = iced::widget::canvas(Plot {
+            graph: Rc::clone(&graph),
+            hover: Rc::clone(&hover),
+        })
+        .width(Fill)
+        .height(Fill);
+        if named == 0 {
+            return plot.into();
         }
+        let legend = iced::widget::canvas(Legend { graph, hover })
+            .width(LEGEND_WIDTH)
+            .height(level(named as u64) * LEGEND_ROW);
+        tooltip(plot, legend, tooltip::Position::FollowCursor)
+            .delay(TOOLTIP_DELAY)
+            .padding(8)
+            .style(container::bordered_box)
+            .into()
     }
 
-    /// One row per named line: its colour, its name and its newest value.
-    fn legend<'a, Message: 'a>(&self) -> Option<Element<'a, Message>> {
-        let rows: Vec<Element<'a, Message>> = self
-            .entries()
-            .into_iter()
-            .map(|(tone, name, value)| {
-                row![
-                    text("●").style(move |theme: &Theme| text::Style {
-                        color: Some(tone.color(theme)),
-                    }),
-                    text(name),
-                    space::horizontal(),
-                    text(value),
-                ]
-                .spacing(8)
-                .into()
-            })
-            .collect();
-        (!rows.is_empty()).then(|| column(rows).spacing(2).width(200).into())
-    }
-
-    fn entries(&self) -> Vec<(Tone, String, String)> {
+    /// One row per named line: its colour, its name and its value `fraction` of the way across,
+    /// or its newest value when the pointer is not on the graph.
+    fn entries(&self, fraction: Option<f32>) -> Vec<(Tone, String, String)> {
+        let back = fraction.map_or(0, |fraction| steps_back(self.span, fraction));
         self.lines
             .iter()
             .filter_map(|line| {
-                let newest = line.values.last().copied().flatten();
                 Some((
                     line.tone,
                     line.name.clone()?,
-                    newest.map_or_else(format::unavailable, |value| self.write(value)),
+                    line.at(back)
+                        .map_or_else(format::unavailable, |value| self.write(value)),
                 ))
             })
             .collect()
@@ -219,6 +227,10 @@ impl Graph {
     }
 }
 
+/// How far across a graph the pointer rests, from 0 at the left edge to 1 at the right. The graph
+/// that sees the pointer writes it and the tooltip that reports the values there reads it.
+type Hover = Rc<Cell<Option<f32>>>;
+
 /// What a graph keeps between redraws: its finished picture, and what the picture was drawn from.
 #[derive(Default)]
 pub struct Drawn {
@@ -226,7 +238,13 @@ pub struct Drawn {
     from: Cell<Option<u64>>,
 }
 
-impl<Message> canvas::Program<Message> for Graph {
+/// The graph itself, drawn with a mark on the moment the pointer is over.
+struct Plot {
+    graph: Rc<Graph>,
+    hover: Hover,
+}
+
+impl<Message> canvas::Program<Message> for Plot {
     type State = Drawn;
 
     /// The glow is hundreds of discs to tessellate, and a window is redrawn for any pointer move
@@ -237,17 +255,69 @@ impl<Message> canvas::Program<Message> for Graph {
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let fingerprint = self.fingerprint(theme);
+        let fingerprint = self.graph.fingerprint(theme);
         if drawn.from.replace(Some(fingerprint)) != Some(fingerprint) {
             drawn.picture.clear();
         }
-        vec![
-            drawn
-                .picture
-                .draw(renderer, bounds.size(), |frame| self.paint(frame, theme)),
-        ]
+        let mut layers = vec![drawn.picture.draw(renderer, bounds.size(), |frame| {
+            self.graph.paint(frame, theme);
+        })];
+        // The tooltip is drawn right after this, and it is the one that needs the pointer.
+        let fraction = cursor
+            .position_in(bounds)
+            .map(|pointer| pointer.x / bounds.width);
+        self.hover.set(fraction);
+        if let Some(fraction) = fraction {
+            let mut frame = Frame::new(renderer, bounds.size());
+            self.graph.mark(&mut frame, theme, fraction);
+            layers.push(frame.into_geometry());
+        }
+        layers
+    }
+}
+
+/// The tooltip's rows, each line's value at the moment the pointer is over.
+struct Legend {
+    graph: Rc<Graph>,
+    hover: Hover,
+}
+
+impl<Message> canvas::Program<Message> for Legend {
+    type State = ();
+
+    fn draw(
+        &self,
+        (): &(),
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let right = frame.width();
+        let color = theme.extended_palette().background.weakest.text;
+        let entries = self.graph.entries(self.hover.get());
+        for (row, (tone, name, value)) in entries.into_iter().enumerate() {
+            let y = (level(row as u64) + 0.5) * LEGEND_ROW;
+            let write = |content: String, x: f32, align_x: text::Alignment| canvas::Text {
+                content,
+                position: Point::new(x, y),
+                color,
+                size: LEGEND_TEXT.into(),
+                align_x,
+                align_y: Vertical::Center,
+                ..canvas::Text::default()
+            };
+            frame.fill(
+                &Path::circle(Point::new(LEGEND_DOT, y), LEGEND_DOT),
+                tone.color(theme),
+            );
+            frame.fill_text(write(name, LEGEND_DOT * 3.0, text::Alignment::Left));
+            frame.fill_text(write(value, right, text::Alignment::Right));
+        }
+        vec![frame.into_geometry()]
     }
 }
 
@@ -277,6 +347,36 @@ impl Graph {
             }
         }
         hasher.finish()
+    }
+
+    /// A line down the moment `fraction` of the way across, with a dot where each line was read.
+    fn mark(&self, frame: &mut Frame, theme: &Theme, fraction: f32) {
+        let back = steps_back(self.span, fraction);
+        let ceiling = self.ceiling().max(f32::EPSILON);
+        let dots: Vec<(Point, Color)> = self
+            .lines
+            .iter()
+            .filter_map(|line| {
+                let at = place(back, self.span, line.at(back)?, ceiling, frame.size());
+                Some((at, line.tone.color(theme)))
+            })
+            .collect();
+        let Some((first, _)) = dots.first() else {
+            return;
+        };
+        let color = theme.extended_palette().background.base.text;
+        frame.stroke(
+            &Path::line(
+                Point::new(first.x, 0.0),
+                Point::new(first.x, frame.height()),
+            ),
+            Stroke::default()
+                .with_width(1.0)
+                .with_color(color.scale_alpha(0.4)),
+        );
+        for (at, color) in dots {
+            frame.fill(&Path::circle(at, MARK_DOT), lighten(color, 0.35));
+        }
     }
 
     fn paint(&self, frame: &mut Frame, theme: &Theme) {
@@ -367,10 +467,7 @@ fn segments(values: &[Option<f32>], span: usize, ceiling: f32, size: Size) -> Ve
     let mut segment = Vec::new();
     for (index, value) in values.iter().enumerate() {
         if let Some(value) = value.filter(|value| value.is_finite()) {
-            segment.push(Point::new(
-                size.width * (1.0 - along(newest - index, span - 1)),
-                size.height * (1.0 - (value / ceiling).clamp(0.0, 1.0)),
-            ));
+            segment.push(place(newest - index, span, value, ceiling, size));
         } else if !segment.is_empty() {
             segments.push(std::mem::take(&mut segment));
         }
@@ -379,6 +476,25 @@ fn segments(values: &[Option<f32>], span: usize, ceiling: f32, size: Size) -> Ve
         segments.push(segment);
     }
     segments
+}
+
+/// Where a reading `back` samples before the newest sits, the newest being at the right edge.
+fn place(back: usize, span: usize, value: f32, ceiling: f32, size: Size) -> Point {
+    Point::new(
+        size.width * (1.0 - along(back, span - 1)),
+        size.height * (1.0 - (value / ceiling).clamp(0.0, 1.0)),
+    )
+}
+
+/// How many samples before the newest `fraction` of the way across a graph `span` samples wide is.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "graph indices stay far below 2^24, and the count is rounded and never negative"
+)]
+fn steps_back(span: usize, fraction: f32) -> usize {
+    ((1.0 - fraction.clamp(0.0, 1.0)) * (span - 1) as f32).round() as usize
 }
 
 fn plain(value: f32) -> String {
@@ -586,7 +702,7 @@ mod tests {
             .named("Video memory")
             .readout(as_percent);
         let entries: Vec<(String, String)> = graph
-            .entries()
+            .entries(None)
             .into_iter()
             .map(|(_, name, value)| (name, value))
             .collect();
@@ -602,7 +718,42 @@ mod tests {
     #[test]
     fn a_graph_with_no_names_has_no_tooltip() {
         let graph = Graph::new(Scale::Fixed(100.0)).line(vec![1.0], Tone::Primary);
-        assert!(graph.entries().is_empty());
+        assert!(graph.entries(None).is_empty());
+    }
+
+    #[test]
+    fn the_pointer_reads_the_value_where_it_rests() {
+        let graph = Graph::new(Scale::Fixed(100.0))
+            .span(5)
+            .line(vec![10.0, 20.0, 30.0, 40.0, 50.0], Tone::Primary)
+            .named("Utilization")
+            .readout(as_percent);
+        let at = |fraction| graph.entries(fraction)[0].2.clone();
+        assert_eq!(at(None), "50%");
+        assert_eq!(at(Some(1.0)), "50%");
+        assert_eq!(at(Some(0.5)), "30%");
+        assert_eq!(at(Some(0.0)), "10%");
+    }
+
+    #[test]
+    fn where_there_was_no_reading_the_pointer_reads_unavailable() {
+        let graph = Graph::new(Scale::Fixed(100.0))
+            .span(5)
+            .optional_line(vec![Some(10.0), None, Some(30.0)], Tone::Primary)
+            .named("Utilization");
+        let at = |fraction| graph.entries(Some(fraction))[0].2.clone();
+        assert_eq!(at(1.0), "30");
+        assert_eq!(at(0.75), "n/a");
+        assert_eq!(at(0.5), "10");
+        assert_eq!(at(0.0), "n/a");
+    }
+
+    #[test]
+    fn a_pointer_position_counts_back_from_the_newest_sample() {
+        assert_eq!(steps_back(5, 1.0), 0);
+        assert_eq!(steps_back(5, 0.0), 4);
+        assert_eq!(steps_back(5, 0.5), 2);
+        assert_eq!(steps_back(5, 2.0), 0);
     }
 
     #[test]
