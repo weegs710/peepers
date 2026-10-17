@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
-use iced::{Element, Task, Theme};
+use iced::{Element, Subscription, Task, Theme, event, keyboard};
 use serde::{Deserialize, Serialize};
 
 use crate::Page;
@@ -179,6 +179,16 @@ impl Settings {
         f32::from(self.text_size) / f32::from(TEXT_DEFAULT)
     }
 
+    /// The text size one step along, held inside the allowed range.
+    fn zoomed(&self, zoom: Zoom) -> u8 {
+        let (least, most) = (*TEXT_SIZES.start(), *TEXT_SIZES.end());
+        match zoom {
+            Zoom::In => (self.text_size + TEXT_STEP).min(most),
+            Zoom::Out => self.text_size.saturating_sub(TEXT_STEP).max(least),
+            Zoom::Reset => TEXT_DEFAULT,
+        }
+    }
+
     /// The saved theme, or the default dark one when the name is not one this version knows.
     pub fn theme(&self) -> Theme {
         Theme::ALL
@@ -187,6 +197,40 @@ impl Settings {
             .cloned()
             .unwrap_or(Theme::Dark)
     }
+}
+
+/// A change of the text size made from the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zoom {
+    In,
+    Out,
+    Reset,
+}
+
+impl Zoom {
+    fn from_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Self> {
+        if !modifiers.control() {
+            return None;
+        }
+        match key.as_ref() {
+            keyboard::Key::Character("+" | "=") => Some(Self::In),
+            keyboard::Key::Character("-" | "_") => Some(Self::Out),
+            keyboard::Key::Character("0") => Some(Self::Reset),
+            _ => None,
+        }
+    }
+}
+
+/// Ctrl with plus, minus or zero resizes the text from any page, the way a browser does.
+pub fn keys() -> Subscription<Message> {
+    event::listen_with(|event, _status, _window| match event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            modified_key,
+            modifiers,
+            ..
+        }) => Zoom::from_key(&modified_key, modifiers).map(Message::Zoom),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +244,7 @@ pub enum Message {
     /// the pointer.
     TextSizeDragged(u8),
     TextSizeChosen,
+    Zoom(Zoom),
     Saved(Result<(), String>),
 }
 
@@ -250,6 +295,7 @@ impl Preferences {
                     self.settings.text_size = size;
                 }
             }
+            Message::Zoom(zoom) => self.settings.text_size = self.settings.zoomed(zoom),
             Message::Saved(result) => {
                 self.notice = result
                     .err()
@@ -401,6 +447,36 @@ mod tests {
         assert_eq!(size(16), 16);
         assert_eq!(size(23), 24);
         assert_eq!(size(200), 24);
+    }
+
+    #[test]
+    fn zooming_steps_the_text_size_and_stops_at_the_ends() {
+        let at = |text_size| Settings {
+            text_size,
+            ..Settings::default()
+        };
+        assert_eq!(at(16).zoomed(Zoom::In), 18);
+        assert_eq!(at(16).zoomed(Zoom::Out), 14);
+        assert_eq!(at(24).zoomed(Zoom::In), 24);
+        assert_eq!(at(12).zoomed(Zoom::Out), 12);
+        assert_eq!(at(22).zoomed(Zoom::Reset), TEXT_DEFAULT);
+    }
+
+    #[test]
+    fn control_with_plus_minus_or_zero_zooms() {
+        let character = |text: &str| keyboard::Key::Character(text.into());
+        let control = keyboard::Modifiers::CTRL;
+        assert_eq!(Zoom::from_key(&character("+"), control), Some(Zoom::In));
+        assert_eq!(Zoom::from_key(&character("="), control), Some(Zoom::In));
+        assert_eq!(Zoom::from_key(&character("-"), control), Some(Zoom::Out));
+        assert_eq!(Zoom::from_key(&character("0"), control), Some(Zoom::Reset));
+        assert_eq!(Zoom::from_key(&character("c"), control), None);
+    }
+
+    #[test]
+    fn plus_without_control_is_only_typing() {
+        let plus = keyboard::Key::Character("+".into());
+        assert_eq!(Zoom::from_key(&plus, keyboard::Modifiers::empty()), None);
     }
 
     #[test]

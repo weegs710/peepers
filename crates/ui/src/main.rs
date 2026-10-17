@@ -364,6 +364,7 @@ impl Peepers {
         Subscription::batch([
             telemetry::subscription(interval),
             window::events().map(Message::Window),
+            settings::keys().map(Message::Settings),
             self.tray.subscription().map(Message::Tray),
             page,
         ])
