@@ -29,6 +29,7 @@ pub fn view<'a, Message: 'a>(
     latest: &Vitals,
     name: &str,
     unit: Temperature,
+    available: f32,
 ) -> Element<'a, Message> {
     let Some(adapter) = find(latest, name) else {
         return space().into();
@@ -82,6 +83,7 @@ pub fn view<'a, Message: 'a>(
         title(adapter),
         Some(adapter.card.clone()),
         graph(history, name),
+        available,
         stats(facts),
     )
 }

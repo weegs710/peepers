@@ -1,5 +1,5 @@
-use iced::Element;
-use iced::widget::{column, container, row};
+use iced::widget::{column, container};
+use iced::{Element, Fill};
 use peepers_core::cpu::Info;
 use peepers_core::telemetry::Vitals;
 
@@ -7,7 +7,12 @@ use super::Card;
 use crate::format;
 use crate::graph::{Graph, Scale, Tone, as_percent};
 use crate::history::History;
-use crate::widgets::{detail, stats};
+use crate::widgets::{detail, flow, stats};
+
+/// The narrowest a logical processor's graph is drawn.
+const CORE_WIDTH: f32 = 120.0;
+const CORE_HEIGHT: f32 = 48.0;
+const CORE_SPACING: f32 = 8.0;
 
 pub fn card(history: &History) -> Card {
     let usage = history.latest().map_or(0.0, |vitals| vitals.cpu.usage);
@@ -19,18 +24,20 @@ pub fn card(history: &History) -> Card {
 }
 
 pub fn view<'a, Message: 'a>(
-    history: &History,
-    latest: &Vitals,
+    history: &'a History,
+    latest: &'a Vitals,
     info: &Info,
+    available: f32,
 ) -> Element<'a, Message> {
-    let cores = row((0..latest.cpu.cores.len()).map(|index| core(history, index)))
-        .spacing(8)
-        .wrap()
-        .vertical_spacing(8);
+    let count = latest.cpu.cores.len();
+    let cores = flow(CORE_WIDTH, CORE_SPACING, move || {
+        (0..count).map(|index| core(history, index)).collect()
+    });
     detail(
         "CPU",
         info.model.clone(),
         graph(history),
+        available,
         column![cores, stats(facts(latest, info))]
             .spacing(18)
             .into(),
@@ -54,8 +61,8 @@ fn core<'a, Message: 'a>(history: &History, index: usize) -> Element<'a, Message
             .readout(as_percent)
             .view(),
     )
-    .width(120)
-    .height(48)
+    .width(Fill)
+    .height(CORE_HEIGHT)
     .into()
 }
 

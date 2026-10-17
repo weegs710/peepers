@@ -21,7 +21,11 @@ pub fn card(history: &History) -> Card {
     }
 }
 
-pub fn view<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a, Message> {
+pub fn view<'a, Message: 'a>(
+    history: &History,
+    latest: &Vitals,
+    available: f32,
+) -> Element<'a, Message> {
     let memory = &latest.memory;
     let pressure = latest
         .pressure
@@ -64,6 +68,7 @@ pub fn view<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a, 
         "Memory",
         Some(format::bytes(memory.total)),
         graph(history),
+        available,
         stats(facts),
     )
 }

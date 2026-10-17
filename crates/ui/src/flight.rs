@@ -13,9 +13,12 @@ use crate::blocking;
 use crate::format;
 use crate::graph::{Graph, LABELLED_HEIGHT, Scale, Tone, as_percent, as_rate, decimate, level};
 use crate::storage;
-use crate::widgets::scrolling;
+use crate::widgets::{flow, scrolling};
 
 const TICK: Duration = Duration::from_millis(100);
+/// The narrowest a replay's graph card is drawn.
+const CARD_WIDTH: f32 = 430.0;
+const CARD_SPACING: f32 = 12.0;
 /// The most points a replay graph draws, however long the recording.
 const POINTS: usize = 600;
 
@@ -419,7 +422,7 @@ fn replay_view(replay: &Replay) -> Element<'_, Message> {
             header.kernel
         ))
         .style(text::secondary),
-        scrolling(row(cards(replay)).spacing(12).wrap().vertical_spacing(12)).height(Fill),
+        scrolling(flow(CARD_WIDTH, CARD_SPACING, move || cards(replay))).height(Fill),
     ]
     .spacing(12)
     .into()
@@ -590,7 +593,7 @@ fn sensor_card<'a>(replay: &'a Replay, plot: &Plot<'_>) -> Option<Element<'a, Me
                     .readout(move |value| format!("{value:.1} {unit}")),
             ),
         ]
-        .width(430)
+        .width(Fill)
         .into(),
     )
 }
@@ -607,7 +610,7 @@ fn card<'a>(title: &str, current: String, graph: Graph) -> Element<'a, Message> 
         ]
         .spacing(6),
     )
-    .width(430)
+    .width(Fill)
     .padding(10)
     .style(container::rounded_box)
     .into()

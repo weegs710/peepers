@@ -8,9 +8,13 @@ use crate::format;
 use crate::graph::{Graph, LABELLED_HEIGHT, Scale, Tone, level};
 use crate::history::History;
 use crate::processes::Processes;
+use crate::widgets::flow;
 
 /// How many of the heaviest processes each list names.
 const CONTRIBUTORS: usize = 5;
+/// The narrowest a resource's card is drawn.
+const CARD_WIDTH: f32 = 340.0;
+const CARD_SPACING: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Resource {
@@ -39,18 +43,21 @@ impl Resource {
     }
 }
 
-pub fn view<'a, Message: 'a>(history: &History, processes: &Processes) -> Element<'a, Message> {
+pub fn view<'a, Message: 'a>(history: &'a History, processes: &Processes) -> Element<'a, Message> {
     let Some(latest) = history.latest() else {
         return container(text("Waiting for the first sample").style(text::secondary))
             .center(Fill)
             .into();
     };
-    let cards = Resource::ALL.map(|resource| card(history, latest, resource));
     scrollable(
         column![
             text("System pressure").size(24),
             summary(latest),
-            row(cards).spacing(12).wrap().vertical_spacing(12),
+            flow(CARD_WIDTH, CARD_SPACING, move || {
+                Resource::ALL
+                    .map(|resource| card(history, latest, resource))
+                    .into()
+            }),
             row![
                 contributors(
                     "Top processor users",
@@ -157,7 +164,7 @@ fn card<'a, Message: 'a>(
         ]
         .spacing(8),
     )
-    .width(430)
+    .width(Fill)
     .padding(12)
     .style(container::rounded_box)
     .into()

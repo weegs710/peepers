@@ -7,8 +7,13 @@ use crate::format;
 use crate::graph::{Graph, Scale, Tone, as_frequency};
 use crate::history::History;
 use crate::settings::Temperature;
+use crate::widgets::flow;
 
-pub fn view<'a, Message: 'a>(history: &History, unit: Temperature) -> Element<'a, Message> {
+/// The narrowest a logical processor's clock is drawn.
+const CLOCK_WIDTH: f32 = 110.0;
+const CLOCK_SPACING: f32 = 12.0;
+
+pub fn view<'a, Message: 'a>(history: &'a History, unit: Temperature) -> Element<'a, Message> {
     let Some(latest) = history.latest() else {
         return container(text("Waiting for the first sample").style(text::secondary))
             .center(Fill)
@@ -29,7 +34,7 @@ pub fn view<'a, Message: 'a>(history: &History, unit: Temperature) -> Element<'a
         .into()
 }
 
-fn processor<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a, Message> {
+fn processor<'a, Message: 'a>(history: &History, latest: &'a Vitals) -> Element<'a, Message> {
     let frequencies: Vec<u64> = latest
         .cpu
         .cores
@@ -75,22 +80,25 @@ fn processor<'a, Message: 'a>(history: &History, latest: &Vitals) -> Element<'a,
             .spacing(2),
         ]
         .spacing(16),
-        row(latest.cpu.cores.iter().map(|core| {
-            column![
-                text(format!("CPU {}", core.id))
-                    .size(12)
-                    .style(text::secondary),
-                text(
-                    core.frequency_khz
-                        .map_or_else(format::unavailable, format::frequency)
-                ),
-            ]
-            .width(110)
-            .into()
-        }))
-        .spacing(12)
-        .wrap()
-        .vertical_spacing(8),
+        flow(CLOCK_WIDTH, CLOCK_SPACING, move || {
+            latest
+                .cpu
+                .cores
+                .iter()
+                .map(|core| {
+                    column![
+                        text(format!("CPU {}", core.id))
+                            .size(12)
+                            .style(text::secondary),
+                        text(
+                            core.frequency_khz
+                                .map_or_else(format::unavailable, format::frequency)
+                        ),
+                    ]
+                    .into()
+                })
+                .collect()
+        }),
     ]
     .spacing(10)
     .into()
@@ -189,7 +197,7 @@ fn reading_row<'a, Message: 'a>(
             .readout(move |value| format::sensor_value(kind, value, unit))
             .view()
         )
-        .width(240)
+        .width(Fill)
         .height(30),
     ]
     .spacing(12)

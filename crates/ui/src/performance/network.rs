@@ -29,6 +29,7 @@ pub fn view<'a, Message: 'a>(
     history: &History,
     latest: &Vitals,
     name: &str,
+    available: f32,
 ) -> Element<'a, Message> {
     let Some(interface) = find(latest, name) else {
         return space().into();
@@ -78,6 +79,7 @@ pub fn view<'a, Message: 'a>(
         interface.model.clone().unwrap_or_else(|| name.to_owned()),
         Some(format!("{name}, {}", kind(interface.kind))),
         graph(history, name),
+        available,
         stats(facts),
     )
 }

@@ -13,9 +13,13 @@ const WINDOW: Size = Size::new(1280.0, 800.0);
 const POPOUT: Size = Size::new(300.0, 560.0);
 
 fn ui(app: &Peepers) -> Simulator<'_, Message> {
+    ui_sized(app, WINDOW)
+}
+
+fn ui_sized(app: &Peepers, size: Size) -> Simulator<'_, Message> {
     Simulator::with_size(
         iced::Settings::default(),
-        WINDOW,
+        size,
         app.view(iced::window::Id::unique()),
     )
 }
@@ -476,6 +480,8 @@ fn render_pages() {
                 .unwrap()
         );
     }
+    render_sizes(&mut app, &directory);
+    render_devices(&mut app, &directory);
     render_recordings(&mut app, &directory);
     render_health(&directory);
     let snapshot = popout(&mut app).snapshot(&Theme::Dark).unwrap();
@@ -501,6 +507,55 @@ fn render_pages() {
                 .unwrap()
         );
     }
+}
+
+/// The pages that lay cells out across the window, tiled wide and floated narrow.
+fn render_sizes(app: &mut Peepers, directory: &str) {
+    for size in [Size::new(1354.0, 1026.0), Size::new(992.0, 822.0)] {
+        for page in [Page::Performance, Page::Pressure, Page::Power, Page::Flight] {
+            update(app, Message::Navigate(page));
+            let snapshot = ui_sized(app, size).snapshot(&Theme::Dark).unwrap();
+            assert!(
+                snapshot
+                    .matches_image(format!("{directory}/{page:?}-{}", size.width))
+                    .unwrap()
+            );
+        }
+    }
+}
+
+/// The detail pages with the fewest facts, which have the most room to waste.
+fn render_devices(app: &mut Peepers, directory: &str) {
+    let gpu = app
+        .history
+        .latest()
+        .and_then(|vitals| vitals.adapters.first())
+        .map(|adapter| performance::Device::Gpu(adapter.card.clone()));
+    update(app, Message::Navigate(Page::Performance));
+    for (file, device) in [
+        Some(("Memory", performance::Device::Memory)),
+        gpu.map(|gpu| ("Gpu", gpu)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        update(
+            app,
+            Message::Performance(performance::Message::Select(device)),
+        );
+        let snapshot = ui_sized(app, Size::new(1354.0, 1026.0))
+            .snapshot(&Theme::Dark)
+            .unwrap();
+        assert!(
+            snapshot
+                .matches_image(format!("{directory}/Performance-{file}"))
+                .unwrap()
+        );
+    }
+    update(
+        app,
+        Message::Performance(performance::Message::Select(performance::Device::Cpu)),
+    );
 }
 
 /// The disk page of an `NVMe` drive in good health, in trouble, and with no reading.

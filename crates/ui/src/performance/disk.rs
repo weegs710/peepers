@@ -35,6 +35,7 @@ pub fn view<'a, Message: 'a>(
     name: &str,
     unit: Temperature,
     health: Option<&Result<Health, String>>,
+    available: f32,
 ) -> Element<'a, Message> {
     let Some(disk) = find(latest, name) else {
         return space().into();
@@ -79,6 +80,7 @@ pub fn view<'a, Message: 'a>(
         format!("Disk {name}"),
         disk.model.clone(),
         rates,
+        available,
         column![stats(facts), wellness(health)].spacing(14).into(),
     )
 }

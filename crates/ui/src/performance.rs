@@ -7,7 +7,7 @@ mod network;
 use std::collections::HashMap;
 
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, responsive, row, scrollable, text};
 use iced::{Element, Fill, Task};
 use peepers_core::cpu::Info;
 use peepers_core::disk::Kind as Drive;
@@ -55,6 +55,7 @@ struct Card {
 }
 
 impl Card {
+    /// Title and value side by side, for a window wide enough to hold both.
     fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
         column![
             row![
@@ -64,6 +65,21 @@ impl Card {
                 text(self.value).wrapping(Wrapping::None),
             ]
             .spacing(8),
+            container(self.graph.view()).height(40),
+        ]
+        .spacing(6)
+        .into()
+    }
+
+    /// Title over value, for the narrow device list where a long value would crowd the title out.
+    fn stacked<'a, Message: 'a>(self) -> Element<'a, Message> {
+        column![
+            container(text(self.title).wrapping(Wrapping::None))
+                .width(Fill)
+                .clip(true),
+            container(text(self.value).wrapping(Wrapping::None))
+                .width(Fill)
+                .clip(true),
             container(self.graph.view()).height(40),
         ]
         .spacing(6)
@@ -138,22 +154,22 @@ impl Performance {
         }
     }
 
-    pub fn view<'a>(&'a self, history: &History, unit: Temperature) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, history: &'a History, unit: Temperature) -> Element<'a, Message> {
         let Some(latest) = history.latest() else {
             return waiting();
         };
         let devices = devices(latest);
         let selected = if devices.contains(&self.selected) {
-            &self.selected
+            self.selected.clone()
         } else {
-            &Device::Cpu
+            Device::Cpu
         };
 
         let list = devices.iter().map(|device| {
-            button(device.card(history).view())
+            button(device.card(history).stacked())
                 .width(Fill)
                 .on_press(Message::Select(device.clone()))
-                .style(if device == selected {
+                .style(if *device == selected {
                     button::secondary
                 } else {
                     button::text
@@ -163,7 +179,7 @@ impl Performance {
 
         row![
             scrollable(column(list).spacing(4).padding(8)).width(260),
-            container(self.detail(selected, history, latest, unit)).width(Fill),
+            responsive(move |size| self.detail(&selected, history, latest, unit, size.height)),
         ]
         .into()
     }
@@ -171,16 +187,24 @@ impl Performance {
     fn detail<'a>(
         &'a self,
         device: &Device,
-        history: &History,
-        latest: &Vitals,
+        history: &'a History,
+        latest: &'a Vitals,
         unit: Temperature,
+        available: f32,
     ) -> Element<'a, Message> {
         match device {
-            Device::Cpu => cpu::view(history, latest, &self.cpu),
-            Device::Memory => memory::view(history, latest),
-            Device::Disk(name) => disk::view(history, latest, name, unit, self.health.get(name)),
-            Device::Network(name) => network::view(history, latest, name),
-            Device::Gpu(name) => gpu::view(history, latest, name, unit),
+            Device::Cpu => cpu::view(history, latest, &self.cpu, available),
+            Device::Memory => memory::view(history, latest, available),
+            Device::Disk(name) => disk::view(
+                history,
+                latest,
+                name,
+                unit,
+                self.health.get(name),
+                available,
+            ),
+            Device::Network(name) => network::view(history, latest, name, available),
+            Device::Gpu(name) => gpu::view(history, latest, name, unit, available),
         }
     }
 }
