@@ -222,6 +222,18 @@ fn the_rail_opens_and_closes_the_popout() {
 }
 
 #[test]
+fn a_command_from_another_process_opens_and_closes_the_popout() {
+    let mut app = sampled();
+    let toggle = || Message::Ipc(ipc::Message::Received(Command::TogglePopout));
+    update(&mut app, toggle());
+    assert!(app.windows.popout.is_open());
+    let id = app.windows.popout.id().unwrap();
+    update(&mut app, toggle());
+    update(&mut app, Message::Window(window::Event::Closed(id)));
+    assert!(!app.windows.popout.is_open());
+}
+
+#[test]
 fn the_popout_keeps_the_history_going_with_the_main_window_closed() {
     let mut app = sampled();
     update(&mut app, Message::TogglePopout);

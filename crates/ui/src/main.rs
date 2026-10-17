@@ -10,6 +10,7 @@ mod gpu_bench;
 mod graph;
 mod history;
 mod info;
+mod ipc;
 mod performance;
 mod power;
 mod pressure;
@@ -27,13 +28,16 @@ mod window;
 #[cfg(test)]
 mod tests;
 
+use std::env;
 use std::fmt;
 use std::io::ErrorKind;
 use std::iter;
+use std::process;
 use std::sync::Arc;
 
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Element, Fill, Subscription, Task, Theme};
+use peepers_core::ipc::Command;
 use peepers_core::telemetry::Sample;
 use peepers_core::tray::{Event as Click, Gauges};
 use serde::{Deserialize, Serialize};
@@ -46,6 +50,7 @@ use crate::drivers::Drivers;
 use crate::flight::Flight;
 use crate::history::History;
 use crate::info::Info;
+use crate::ipc::Door;
 use crate::performance::Performance;
 use crate::processes::Processes;
 use crate::services::Services;
@@ -55,7 +60,29 @@ use crate::tray::Indicator;
 use crate::users::Users;
 use crate::window::Windows;
 
+const USAGE: &str = "Usage: peepers [--toggle-pop]";
+
+/// What the command line asks for in place of the application, as an exit status.
+fn command_line(argument: &str) -> i32 {
+    match argument {
+        "--toggle-pop" => match peepers_core::ipc::send(Command::TogglePopout) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        },
+        other => {
+            eprintln!("Unknown option {other}\n{USAGE}");
+            2
+        }
+    }
+}
+
 fn main() -> iced::Result {
+    if let Some(argument) = env::args().nth(1) {
+        process::exit(command_line(&argument));
+    }
     iced::daemon(Peepers::new, Peepers::update, Peepers::view)
         .title(|_: &Peepers, _| "peepers".to_owned())
         .subscription(Peepers::subscription)
@@ -84,6 +111,7 @@ struct Peepers {
     preferences: Preferences,
     windows: Windows,
     tray: Indicator,
+    door: Door,
     /// Whether new samples are kept from the pages, so what is on screen holds still.
     paused: bool,
 }
@@ -199,6 +227,7 @@ enum Message {
     Info(info::Message),
     Settings(settings::Message),
     Tray(tray::Message),
+    Ipc(ipc::Message),
     Window(window::Event),
     TogglePause,
     TogglePopout,
@@ -214,7 +243,8 @@ impl Peepers {
         };
         let window = app.windows.main.open();
         let tray = app.sync_tray();
-        (app, Task::batch([window, tray]))
+        let door = Door::open().map(Message::Ipc);
+        (app, Task::batch([window, tray, door]))
     }
 
     /// Starts or removes the tray icon so it matches the setting, and opens the window when
@@ -312,6 +342,10 @@ impl Peepers {
                 Click::Pause => return self.update(Message::TogglePause),
                 Click::Quit => return iced::exit(),
             },
+            Message::Ipc(ipc::Message::Started(result)) => self.door.started(result),
+            Message::Ipc(ipc::Message::Received(Command::TogglePopout)) => {
+                return self.update(Message::TogglePopout);
+            }
             Message::Window(event) => {
                 let main = self.windows.main.update(event, self.tray.is_active());
                 let popout = self.windows.popout.update(event, true);
@@ -365,6 +399,7 @@ impl Peepers {
             telemetry::subscription(interval),
             window::events().map(Message::Window),
             settings::keys().map(Message::Settings),
+            self.door.subscription().map(Message::Ipc),
             self.tray.subscription().map(Message::Tray),
             page,
         ])
