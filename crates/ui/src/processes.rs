@@ -118,6 +118,11 @@ impl Processes {
         &self.list
     }
 
+    /// The process the panel below the table describes.
+    pub fn selected(&self) -> Option<u32> {
+        self.selected
+    }
+
     /// The name of a process in the latest sample.
     pub fn name(&self, pid: u32) -> Option<&str> {
         self.list
@@ -337,7 +342,8 @@ impl Processes {
             .into()
     }
 
-    fn panel(&self) -> Option<Element<'_, Message>> {
+    /// What the selected process is, with the actions that apply to it.
+    pub fn panel(&self) -> Option<Element<'_, Message>> {
         let process = self
             .list
             .iter()

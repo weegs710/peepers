@@ -200,6 +200,7 @@ mod tests {
             nice: 0,
             cpu,
             memory,
+            io: None,
             started: Duration::ZERO,
         }
     }

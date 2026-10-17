@@ -114,6 +114,19 @@ fn selecting_a_process_opens_its_panel() {
 }
 
 #[test]
+fn choosing_a_process_on_the_pressure_page_shows_its_panel_below_the_lists() {
+    let mut app = sampled();
+    update(&mut app, Message::Navigate(Page::Pressure));
+    assert!(ui(&app).find("Top storage users").is_ok());
+    assert!(ui(&app).find("End task").is_err());
+    update(
+        &mut app,
+        Message::Processes(processes::Message::Select(std::process::id())),
+    );
+    assert!(ui(&app).find("End task").is_ok());
+}
+
+#[test]
 fn the_filter_narrows_the_table() {
     let mut app = sampled();
     update(

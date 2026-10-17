@@ -23,11 +23,7 @@ impl Details {
     pub fn read(pid: u32) -> Self {
         let proc = PathBuf::from(format!("/proc/{pid}"));
         let io = fs::read_to_string(proc.join("io")).ok();
-        let counter = |name: &str| {
-            io.as_deref()?
-                .lines()
-                .find_map(|line| line.strip_prefix(name)?.trim().parse().ok())
-        };
+        let counter = |name: &str| io.as_deref().and_then(|io| super::counter(io, name));
         Self {
             command: fs::read(proc.join("cmdline"))
                 .ok()

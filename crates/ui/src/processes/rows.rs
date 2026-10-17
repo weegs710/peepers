@@ -89,6 +89,7 @@ mod tests {
             nice: 0,
             cpu: 0.0,
             memory: 0,
+            io: None,
             started: Duration::ZERO,
         }
     }

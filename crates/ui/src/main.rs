@@ -426,7 +426,9 @@ impl Peepers {
                 .performance
                 .view(&self.history, self.preferences.settings.temperature)
                 .map(Message::Performance),
-            Page::Pressure => pressure::view(&self.history, &self.processes),
+            Page::Pressure => {
+                pressure::view(&self.history, &self.processes).map(Message::Processes)
+            }
             Page::Power => power::view(&self.history, self.preferences.settings.temperature),
             Page::Flight => self.flight.view().map(Message::Flight),
             Page::Benchmarks => self

@@ -7,7 +7,7 @@ use std::fs::{self, DirEntry};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustix::param::{clock_ticks_per_second, page_size};
 
@@ -71,6 +71,9 @@ pub struct Process {
     /// Share of one core, so a process saturating four cores reads 400.
     pub cpu: f32,
     pub memory: u64,
+    /// Bytes a second moved to or from storage. Unknown for the first sample and for processes
+    /// whose `io` file only its owner or root may read.
+    pub io: Option<u64>,
     /// How long after boot the process started.
     pub started: Duration,
 }
@@ -78,10 +81,12 @@ pub struct Process {
 #[derive(Debug, Default)]
 pub struct Sampler {
     ticks: HashMap<u32, u64>,
+    moved: HashMap<u32, u64>,
     total: u64,
+    at: Option<Instant>,
 }
 
-/// A process as one read of its `stat` file describes it.
+/// A process as one read of its `stat` and `io` files describes it.
 struct Reading {
     pid: u32,
     parent: u32,
@@ -92,6 +97,8 @@ struct Reading {
     threads: u32,
     started: u64,
     pages: u64,
+    /// Bytes moved to or from storage since the process began.
+    moved: Option<u64>,
 }
 
 impl Sampler {
@@ -104,16 +111,31 @@ impl Sampler {
         let elapsed = total.saturating_sub(self.total) / stat.cores.len() as u64;
         let page = page_size() as u64;
         let hertz = clock_ticks_per_second();
-        let mut ticks = HashMap::new();
+        let now = Instant::now();
+        let millis = self.at.map(|at| {
+            u64::try_from(now.duration_since(at).as_millis())
+                .unwrap_or(u64::MAX)
+                .max(1)
+        });
+        let (mut ticks, mut moved) = (HashMap::new(), HashMap::new());
 
         let processes = fs::read_dir("/proc")?
             .filter_map(|entry| read(&entry.ok()?))
             .map(|(reading, uid)| {
                 ticks.insert(reading.pid, reading.ticks);
+                if let Some(bytes) = reading.moved {
+                    moved.insert(reading.pid, bytes);
+                }
                 Process {
                     cpu: self.ticks.get(&reading.pid).map_or(0.0, |&before| {
                         percent(reading.ticks.saturating_sub(before), elapsed)
                     }),
+                    io: match (millis, reading.moved, self.moved.get(&reading.pid)) {
+                        (Some(millis), Some(now), Some(&before)) => {
+                            Some(now.saturating_sub(before).saturating_mul(1000) / millis)
+                        }
+                        _ => None,
+                    },
                     memory: reading.pages * page,
                     started: Duration::from_secs(reading.started / hertz),
                     pid: reading.pid,
@@ -128,7 +150,9 @@ impl Sampler {
             .collect();
 
         self.ticks = ticks;
+        self.moved = moved;
         self.total = total;
+        self.at = Some(now);
         Ok(processes)
     }
 }
@@ -136,7 +160,22 @@ impl Sampler {
 fn read(entry: &DirEntry) -> Option<(Reading, u32)> {
     let pid = entry.file_name().to_str()?.parse().ok()?;
     let stat = fs::read_to_string(entry.path().join("stat")).ok()?;
-    Some((parse_stat(pid, &stat)?, entry.metadata().ok()?.uid()))
+    let mut reading = parse_stat(pid, &stat)?;
+    reading.moved = fs::read_to_string(entry.path().join("io"))
+        .ok()
+        .and_then(|io| parse_io(&io));
+    Some((reading, entry.metadata().ok()?.uid()))
+}
+
+/// One counter, such as `read_bytes:`, from the contents of an `io` file.
+fn counter(io: &str, name: &str) -> Option<u64> {
+    io.lines()
+        .find_map(|line| line.strip_prefix(name)?.trim().parse().ok())
+}
+
+/// Bytes read from and written to storage, from the contents of an `io` file.
+fn parse_io(io: &str) -> Option<u64> {
+    Some(counter(io, "read_bytes:")? + counter(io, "write_bytes:")?)
 }
 
 /// Positions of the fields after the closing parenthesis of the name.
@@ -166,6 +205,7 @@ fn parse_stat(pid: u32, stat: &str) -> Option<Reading> {
         threads: at(&fields, field::THREADS)?,
         started: at(&fields, field::START)?,
         pages: at(&fields, field::PAGES)?,
+        moved: None,
     })
 }
 
@@ -203,6 +243,13 @@ mod tests {
     }
 
     #[test]
+    fn io_counts_what_reached_storage_and_ignores_the_rest() {
+        let io = "rchar: 900\nwchar: 800\nsyscr: 1\nsyscw: 2\nread_bytes: 4096\nwrite_bytes: 512\ncancelled_write_bytes: 0\n";
+        assert_eq!(parse_io(io), Some(4608));
+        assert_eq!(parse_io("rchar: 900\n"), None);
+    }
+
+    #[test]
     fn stat_without_enough_fields_is_rejected() {
         assert!(parse_stat(42, "42 (short) S 1").is_none());
     }
@@ -225,6 +272,7 @@ mod tests {
             .find(|p| p.pid == pid)
             .unwrap();
         assert!(found.memory > 0 && found.threads >= 1);
+        assert!(found.io.is_some());
         assert_eq!(found.parent, std::os::unix::process::parent_id());
     }
 }
