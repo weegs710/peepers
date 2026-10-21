@@ -101,7 +101,7 @@ impl Default for Processes {
             filter: String::new(),
             command: String::new(),
             list: Vec::new(),
-            users: Users::read(),
+            users: Users::default(),
             cpus: Vec::new(),
             uptime: std::time::Duration::ZERO,
             collapsed: HashSet::new(),
@@ -135,13 +135,7 @@ impl Processes {
         self.list.clone_from(&sample.processes);
         self.cpus = sample.vitals.cpu.cores.iter().map(|core| core.id).collect();
         self.uptime = sample.vitals.uptime;
-        if self
-            .list
-            .iter()
-            .any(|process| self.users.name(process.uid).is_none())
-        {
-            self.users = Users::read();
-        }
+        self.users.clone_from(&sample.users);
         self.order();
         self.refresh_details();
     }
