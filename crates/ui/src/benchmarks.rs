@@ -3,6 +3,7 @@ mod disk;
 mod gpu;
 mod internet;
 
+use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fmt;
@@ -17,7 +18,7 @@ use peepers_core::bench::{Event, Gpu, History, Job, Loaded, Outcome, Record, Run
 use crate::blocking;
 use crate::format;
 use crate::gpu_bench;
-use crate::widgets::scrolling;
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 const POLL: Duration = Duration::from_millis(100);
 
@@ -53,8 +54,34 @@ pub enum Start {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Column {
+    #[default]
+    When,
+    Test,
+    Result,
+}
+
+impl Sortable for Column {
+    /// The newest result first, and names smallest first.
+    fn descending_first(self) -> bool {
+        self == Self::When
+    }
+}
+
+impl Column {
+    fn compare(self, a: &Record, b: &Record) -> Ordering {
+        match self {
+            Self::When => a.at.cmp(&b.at),
+            Self::Test => test(&a.outcome).cmp(test(&b.outcome)),
+            Self::Result => summary(&a.outcome).cmp(&summary(&b.outcome)),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
+    Sort(Column),
     Loaded(Result<Loaded, String>),
     Select(Section),
     Start(Start),
@@ -95,6 +122,7 @@ impl fmt::Debug for Active {
 pub struct Benchmarks {
     section: Section,
     history: History,
+    sorting: Sorting<Column>,
     history_path: PathBuf,
     active: Option<Active>,
     queue: VecDeque<Step>,
@@ -111,6 +139,7 @@ impl Default for Benchmarks {
         Self {
             section: Section::Cpu,
             history: History::default(),
+            sorting: Sorting::default(),
             history_path: PathBuf::from(state).join("peepers/benchmarks.json"),
             active: None,
             queue: VecDeque::new(),
@@ -195,6 +224,7 @@ impl Benchmarks {
                 }
             }
             Message::Finished(result) => return self.gpu_finished(result),
+            Message::Sort(column) => self.sorting.press(column),
             Message::Poll => return self.poll(),
             Message::Clear => {
                 self.history.clear();
@@ -386,17 +416,23 @@ impl Benchmarks {
                 .style(text::secondary)
                 .into();
         }
+        let mut records: Vec<&Record> = self.history.records().collect();
+        self.sorting
+            .sort(&mut records, |column, a, b| column.compare(a, b));
+        let header = |label, column| {
+            sort_header(label, self.sorting.direction(column), Message::Sort(column))
+        };
         let columns = [
-            table::column("When", |record: &Record| text(format::date_time(record.at))),
-            table::column("Test", |record: &Record| {
-                text(match record.outcome {
-                    Outcome::Cpu(_) => "Processor",
-                    Outcome::Gpu(_) => "Graphics",
-                    Outcome::Internet(_) => "Internet",
-                    Outcome::Disk(_) => "Disk",
-                })
+            table::column(header("When", Column::When), |record: &Record| {
+                text(format::date_time(record.at))
             }),
-            table::column("Result", |record: &Record| text(summary(&record.outcome))).width(Fill),
+            table::column(header("Test", Column::Test), |record: &Record| {
+                text(test(&record.outcome))
+            }),
+            table::column(header("Result", Column::Result), |record: &Record| {
+                text(summary(&record.outcome))
+            })
+            .width(Fill),
         ];
         column![
             row![
@@ -407,13 +443,9 @@ impl Benchmarks {
                     .style(button::secondary)
             ]
             .align_y(iced::Center),
-            scrolling(
-                table(columns, self.history.records())
-                    .padding_x(10)
-                    .padding_y(2)
-            )
-            .width(Fill)
-            .height(Fill),
+            scrolling(table(columns, records).padding_x(10).padding_y(2))
+                .width(Fill)
+                .height(Fill),
         ]
         .spacing(8)
         .into()
@@ -457,6 +489,15 @@ fn not_run<'a>() -> Element<'a, Message> {
     text("Not run yet").style(text::secondary).into()
 }
 
+fn test(outcome: &Outcome) -> &'static str {
+    match outcome {
+        Outcome::Cpu(_) => "Processor",
+        Outcome::Gpu(_) => "Graphics",
+        Outcome::Internet(_) => "Internet",
+        Outcome::Disk(_) => "Disk",
+    }
+}
+
 fn summary(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Cpu(cpu) => cpu::summary(cpu),
@@ -468,7 +509,64 @@ fn summary(outcome: &Outcome) -> String {
 
 #[cfg(test)]
 mod tests {
+    use peepers_core::bench::GpuKind;
+
     use super::*;
+    use crate::widgets::pressed;
+
+    fn record(at: u64, adapter: &str, gigaflops: f32) -> Record {
+        Record {
+            at,
+            outcome: Outcome::Gpu(Gpu {
+                adapter: adapter.to_owned(),
+                kind: GpuKind::Other,
+                gigaflops,
+                bandwidth: 0,
+            }),
+        }
+    }
+
+    fn ordered(column: Column, again: bool, records: &[Record]) -> Vec<u64> {
+        let mut sorting = Sorting::new(column);
+        if again {
+            sorting.press(column);
+        }
+        let mut rows: Vec<&Record> = records.iter().collect();
+        sorting.sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter().map(|row| row.at).collect()
+    }
+
+    #[test]
+    fn every_column_orders_the_history_and_the_newest_leads_by_default() {
+        let records = [
+            record(20, "Navi", 5.0),
+            record(30, "Arc", 7.0),
+            record(10, "Zen", 1.0),
+        ];
+        assert_eq!(ordered(Column::When, false, &records), [30, 20, 10]);
+        assert_eq!(ordered(Column::When, true, &records), [10, 20, 30]);
+        assert_eq!(ordered(Column::Test, false, &records), [20, 30, 10]);
+        assert_eq!(ordered(Column::Result, false, &records).len(), 3);
+        assert_eq!(
+            Sorting::<Column>::default().direction(Column::When),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn pressing_a_heading_orders_the_history_by_it() {
+        let mut benchmarks = Benchmarks::default();
+        benchmarks.history.push(Outcome::Gpu(Gpu {
+            adapter: "Navi".to_owned(),
+            kind: GpuKind::Other,
+            gigaflops: 1.0,
+            bandwidth: 0,
+        }));
+        for message in pressed(benchmarks.history_table(), "Test") {
+            drop(benchmarks.update(message));
+        }
+        assert_eq!(benchmarks.sorting.direction(Column::Test), Some(false));
+    }
 
     #[test]
     fn run_everything_queues_the_processor_then_the_graphics_then_the_disk() {
