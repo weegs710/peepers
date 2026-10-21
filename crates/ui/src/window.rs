@@ -53,6 +53,8 @@ pub struct Window {
     kind: Kind,
     id: Option<window::Id>,
     focused: bool,
+    /// A close has been asked for and not yet reported.
+    closing: bool,
 }
 
 /// The application's windows, which share the clock and the history but not the room.
@@ -77,6 +79,7 @@ impl Window {
             kind,
             id: None,
             focused: false,
+            closing: false,
         }
     }
 
@@ -97,14 +100,27 @@ impl Window {
     pub fn open<T: Send + 'static>(&mut self) -> Task<T> {
         let (id, opened) = window::open(self.kind.settings());
         self.id = Some(id);
+        self.closing = false;
         opened.discard()
+    }
+
+    /// Asks for the window to close. It counts as open until the close is reported, so what is
+    /// asked of it in that gap must not take it for a window that will stay.
+    fn close<T: Send + 'static>(&mut self, id: window::Id) -> Task<T> {
+        self.closing = true;
+        window::close(id)
+    }
+
+    /// Whether the window is open and not on its way out.
+    fn staying(&self) -> bool {
+        self.id.is_some() && !self.closing
     }
 
     /// Shows the window if it is hidden and hides it if it is shown.
     pub fn toggle<T: Send + 'static>(&mut self) -> Task<T> {
         match self.id {
-            None => self.open(),
-            Some(id) => window::close(id),
+            Some(id) if self.staying() => self.close(id),
+            _ => self.open(),
         }
     }
 
@@ -113,9 +129,9 @@ impl Window {
     /// and a new window is what a compositor focuses.
     pub fn activate<T: Send + 'static>(&mut self) -> Task<T> {
         match self.id {
-            None => self.open(),
-            Some(id) if self.focused => window::close(id),
-            Some(id) => window::close(id).chain(self.open()),
+            Some(id) if self.staying() && self.focused => self.close(id),
+            Some(id) if self.staying() => window::close(id).chain(self.open()),
+            _ => self.open(),
         }
     }
 
@@ -127,7 +143,7 @@ impl Window {
             Event::Unfocused(id) if self.owns(id) => self.focused = false,
             Event::CloseRequested(id) if self.owns(id) => {
                 return if to_tray {
-                    window::close(id)
+                    self.close(id)
                 } else {
                     iced::exit()
                 };
@@ -135,6 +151,7 @@ impl Window {
             Event::Closed(id) if self.owns(id) => {
                 self.id = None;
                 self.focused = false;
+                self.closing = false;
             }
             Event::Focused(_)
             | Event::Unfocused(_)
@@ -179,6 +196,35 @@ mod tests {
         drop(window.update::<()>(Event::Focused(id), true));
         drop(window.activate::<()>());
         assert_eq!(window.id, Some(id));
+    }
+
+    #[test]
+    fn toggling_a_window_on_its_way_out_opens_it_again() {
+        let (mut window, id) = open();
+        drop(window.toggle::<()>());
+        drop(window.toggle::<()>());
+        assert_ne!(window.id, Some(id));
+        drop(window.update::<()>(Event::Closed(id), true));
+        assert!(window.is_open());
+    }
+
+    #[test]
+    fn activating_a_window_on_its_way_out_opens_it_again() {
+        let (mut window, id) = open();
+        drop(window.update::<()>(Event::Focused(id), true));
+        drop(window.activate::<()>());
+        drop(window.activate::<()>());
+        assert_ne!(window.id, Some(id));
+        drop(window.update::<()>(Event::Closed(id), true));
+        assert!(window.is_open());
+    }
+
+    #[test]
+    fn a_close_request_hidden_to_the_tray_is_a_window_on_its_way_out() {
+        let (mut window, id) = open();
+        drop(window.update::<()>(Event::CloseRequested(id), true));
+        drop(window.toggle::<()>());
+        assert_ne!(window.id, Some(id));
     }
 
     #[test]
