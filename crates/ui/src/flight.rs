@@ -182,6 +182,11 @@ impl Flight {
         self.recorder.is_some()
     }
 
+    /// Drops the recording that is running, with nothing saved.
+    pub fn discard(&mut self) {
+        self.recorder = None;
+    }
+
     /// A line for the navigation rail while a recording is running.
     pub fn status(&self) -> Option<String> {
         self.recorder

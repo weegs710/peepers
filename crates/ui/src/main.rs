@@ -153,6 +153,18 @@ struct Peepers {
     latest: Option<Arc<Sample>>,
     /// Whether new samples are kept from the pages, so what is on screen holds still.
     paused: bool,
+    /// The application was asked to end while a recording was running, and is waiting to be told
+    /// what becomes of it.
+    asking_to_quit: bool,
+    /// A recording is being saved, and the application ends once it is.
+    quitting: bool,
+}
+
+/// What becomes of a recording that is running when the application is asked to end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fate {
+    Save,
+    Discard,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,6 +307,9 @@ enum Message {
     Window(window::Event),
     TogglePause,
     TogglePopout,
+    /// End the application, with `None` asking what to do if a recording is running.
+    Quit(Option<Fate>),
+    KeepRunning,
 }
 
 impl Peepers {
@@ -358,6 +373,27 @@ impl Peepers {
         task
     }
 
+    /// Ends the application. A recording that is running is saved or discarded first as `fate`
+    /// says, and when it says nothing the window asks, because either choice could lose something.
+    fn quit(&mut self, fate: Option<Fate>) -> Task<Message> {
+        self.asking_to_quit = false;
+        match (fate, self.flight.is_recording()) {
+            (None, true) => {
+                self.asking_to_quit = true;
+                self.windows.main.reveal()
+            }
+            (Some(Fate::Save), true) => {
+                self.quitting = true;
+                self.update(Message::Flight(flight::Message::Stop))
+            }
+            (Some(Fate::Discard), true) => {
+                self.flight.discard();
+                iced::exit()
+            }
+            (_, false) => iced::exit(),
+        }
+    }
+
     /// Carries out what another process asked for.
     fn run(&mut self, command: Command) -> Task<Message> {
         match command {
@@ -378,7 +414,7 @@ impl Peepers {
             }
             Command::StartRecording => self.update(Message::Flight(flight::Message::Start)),
             Command::StopRecording => self.update(Message::Flight(flight::Message::Stop)),
-            Command::Quit => iced::exit(),
+            Command::Quit => self.quit(None),
             Command::OpenPage(name) => match Page::from_slug(name) {
                 Some(page) => {
                     let window = self.windows.main.reveal();
@@ -430,7 +466,17 @@ impl Peepers {
             Message::DiskSpace(message) => {
                 return self.disk_space.update(message).map(Message::DiskSpace);
             }
+            Message::Quit(fate) => return self.quit(fate),
+            Message::KeepRunning => self.asking_to_quit = false,
             Message::Flight(message) => {
+                if self.quitting
+                    && let flight::Message::Saved(result) = &message
+                {
+                    if result.is_ok() {
+                        return iced::exit();
+                    }
+                    self.quitting = false;
+                }
                 return self
                     .flight
                     .update(message, self.latest.as_deref().map(|sample| &sample.vitals))
@@ -458,11 +504,18 @@ impl Peepers {
                 Click::Window => return self.windows.main.toggle(),
                 Click::Popout => return self.update(Message::TogglePopout),
                 Click::Pause => return self.update(Message::TogglePause),
-                Click::Quit => return iced::exit(),
+                Click::Quit => return self.quit(None),
             },
             Message::Ipc(ipc::Message::Started(result)) => self.door.started(result),
             Message::Ipc(ipc::Message::Received(command)) => return self.run(command),
             Message::Window(event) => {
+                if let window::Event::CloseRequested(id) = event
+                    && self.windows.main.owns(id)
+                    && !self.tray.is_active()
+                    && self.flight.is_recording()
+                {
+                    return self.quit(None);
+                }
                 let main = self.windows.main.update(event, self.tray.is_active());
                 let popout = self.windows.popout.update(event, true);
                 self.tray.set_window_open(self.windows.main.is_open());
@@ -607,13 +660,39 @@ impl Peepers {
                 .map(Message::Settings),
         };
 
-        column![row![rail, content].height(Fill)]
+        column![]
+            .extend(self.asking_to_quit.then(quit_prompt))
+            .push(row![rail, content].height(Fill))
             .extend(
                 self.failure
                     .map(|kind| text!("Sampling failed: {kind}").style(text::danger).into()),
             )
             .into()
     }
+}
+
+/// What the window asks when the application is to end with a recording still running.
+fn quit_prompt() -> Element<'static, Message> {
+    container(
+        row![
+            text("A recording is running. Save it before quitting?").style(text::danger),
+            button("Save and quit")
+                .on_press(Message::Quit(Some(Fate::Save)))
+                .style(button::success),
+            button("Discard and quit")
+                .on_press(Message::Quit(Some(Fate::Discard)))
+                .style(button::danger),
+            button("Keep running")
+                .on_press(Message::KeepRunning)
+                .style(button::secondary),
+        ]
+        .spacing(8)
+        .align_y(iced::Center),
+    )
+    .padding(8)
+    .width(Fill)
+    .style(container::bordered_box)
+    .into()
 }
 
 /// A rail section's name with a rule running on from it to the edge.

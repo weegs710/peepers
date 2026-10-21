@@ -342,6 +342,63 @@ fn the_bus_names_the_pages_as_the_application_does() {
 }
 
 #[test]
+fn quitting_with_nothing_recording_ends_the_application() {
+    let mut app = sampled();
+    assert_eq!(app.update(Message::Quit(None)).units(), 1);
+    assert!(!app.asking_to_quit);
+}
+
+#[test]
+fn quitting_while_recording_asks_first_and_keeps_the_recording() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Quit(None)));
+    assert!(app.asking_to_quit && app.flight.is_recording());
+    assert!(ui(&app).find("Save and quit").is_ok());
+    assert!(ui(&app).find("Discard and quit").is_ok());
+    click(&mut app, "Keep running");
+    assert!(!app.asking_to_quit && app.flight.is_recording());
+    assert!(ui(&app).find("Save and quit").is_err());
+}
+
+#[test]
+fn discarding_ends_the_application_with_nothing_saved() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    assert_eq!(app.update(Message::Quit(Some(Fate::Discard))).units(), 1);
+    assert!(!app.flight.is_recording());
+}
+
+#[test]
+fn saving_waits_for_the_file_before_ending() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Quit(Some(Fate::Save))));
+    assert!(app.quitting && !app.flight.is_recording());
+    let saved = Message::Flight(flight::Message::Saved(Ok("/recordings/a.json".into())));
+    assert_eq!(app.update(saved).units(), 1);
+}
+
+#[test]
+fn a_recording_that_cannot_be_saved_keeps_the_application_open() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Quit(Some(Fate::Save))));
+    let failed = Message::Flight(flight::Message::Saved(Err("the disk is full".to_owned())));
+    drop(app.update(failed));
+    assert!(!app.quitting);
+}
+
+#[test]
+fn closing_the_last_window_with_a_recording_running_asks_first() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    let id = app.windows.main.id().unwrap();
+    update(&mut app, Message::Window(window::Event::CloseRequested(id)));
+    assert!(app.asking_to_quit);
+}
+
+#[test]
 fn what_other_processes_read_follows_the_application() {
     let mut app = sampled();
     update(&mut app, Message::Navigate(Page::Power));
