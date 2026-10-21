@@ -329,6 +329,23 @@ impl Peepers {
         self.preferences.settings.theme()
     }
 
+    fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.apply(message);
+        self.door.publish(self.ipc_state());
+        task
+    }
+
+    /// What other processes can read about the application.
+    fn ipc_state(&self) -> peepers_core::ipc::State {
+        peepers_core::ipc::State {
+            paused: self.paused,
+            popout_open: self.windows.popout.is_open(),
+            window_open: self.windows.main.is_open(),
+            page: self.page.slug(),
+            recording: self.flight.is_recording(),
+        }
+    }
+
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
         self.tray.set_paused(paused);
@@ -372,7 +389,7 @@ impl Peepers {
         }
     }
 
-    fn update(&mut self, message: Message) -> Task<Message> {
+    fn apply(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Sampled(sample) => {
                 self.failure = None;

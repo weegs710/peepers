@@ -178,6 +178,10 @@ impl Flight {
         }
     }
 
+    pub fn is_recording(&self) -> bool {
+        self.recorder.is_some()
+    }
+
     /// A line for the navigation rail while a recording is running.
     pub fn status(&self) -> Option<String> {
         self.recorder

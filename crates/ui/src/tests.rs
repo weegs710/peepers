@@ -342,6 +342,19 @@ fn the_bus_names_the_pages_as_the_application_does() {
 }
 
 #[test]
+fn what_other_processes_read_follows_the_application() {
+    let mut app = sampled();
+    update(&mut app, Message::Navigate(Page::Power));
+    update(&mut app, Message::TogglePause);
+    let state = app.ipc_state();
+    assert!(state.paused && state.window_open);
+    assert!(!state.popout_open && !state.recording);
+    assert_eq!(state.page, "power");
+    sent(&mut app, Command::StartRecording);
+    assert!(app.ipc_state().recording);
+}
+
+#[test]
 fn the_command_line_names_what_it_asks_for() {
     let asks = |arguments: &[&str]| {
         parse(

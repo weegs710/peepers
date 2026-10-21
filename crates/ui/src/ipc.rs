@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::futures::SinkExt;
 use iced::{Subscription, Task, stream};
-use peepers_core::ipc::{Command, Listener};
+use peepers_core::ipc::{Command, Listener, State};
 
 use crate::blocking;
 
@@ -16,6 +16,8 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Door {
     listener: Option<Arc<Listener>>,
+    /// What the listener was last told, so only a change is sent.
+    published: Option<State>,
 }
 
 impl Door {
@@ -26,6 +28,16 @@ impl Door {
     /// A copy that cannot claim the name is a second one, and the first keeps answering.
     pub fn started(&mut self, result: Result<Arc<Listener>, String>) {
         self.listener = result.ok();
+    }
+
+    /// Lets other processes read `state`, when it is not what they were told last.
+    pub fn publish(&mut self, state: State) {
+        if let Some(listener) = &self.listener
+            && self.published.as_ref() != Some(&state)
+        {
+            listener.publish(state.clone());
+            self.published = Some(state);
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

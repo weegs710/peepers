@@ -1,15 +1,19 @@
-//! Lets another process tell the running application what to do, so a compositor key or a script
-//! can drive it.
+//! Lets another process tell the running application what to do and read what state it is in, so a
+//! compositor key or a script can drive it.
 
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, JoinHandle};
 
 use zbus::blocking::{Connection, connection};
 use zbus::{fdo, interface};
+use zvariant::Value;
 
 const NAME: &str = "dev.weegs.Peepers";
 const PATH: &str = "/dev/weegs/Peepers";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const SERVICE_UNKNOWN: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
 
 /// The pages a command can open, spelled as the command line and the bus spell them, in the order
@@ -61,9 +65,25 @@ impl Command {
     }
 }
 
+/// What the application says about itself, which other processes can read and watch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts published as properties, not the states of one machine"
+)]
+pub struct State {
+    pub paused: bool,
+    pub popout_open: bool,
+    pub window_open: bool,
+    /// One of [`PAGES`], or nothing before the application has said.
+    pub page: &'static str,
+    pub recording: bool,
+}
+
 /// The object other processes call.
 struct Control {
     commands: Sender<Command>,
+    state: Arc<Mutex<State>>,
 }
 
 impl Control {
@@ -71,6 +91,10 @@ impl Control {
         self.commands
             .send(command)
             .map_err(|_| fdo::Error::Failed("peepers is shutting down".to_owned()))
+    }
+
+    fn state(&self) -> State {
+        lock(&self.state).clone()
     }
 }
 
@@ -133,6 +157,31 @@ impl Control {
         })?;
         self.send(command)
     }
+
+    #[zbus(property)]
+    fn paused(&self) -> bool {
+        self.state().paused
+    }
+
+    #[zbus(property)]
+    fn popout_open(&self) -> bool {
+        self.state().popout_open
+    }
+
+    #[zbus(property)]
+    fn window_open(&self) -> bool {
+        self.state().window_open
+    }
+
+    #[zbus(property)]
+    fn page(&self) -> String {
+        self.state().page.to_owned()
+    }
+
+    #[zbus(property)]
+    fn recording(&self) -> bool {
+        self.state().recording
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -162,6 +211,9 @@ impl Hash for Commands {
 #[derive(Debug)]
 pub struct Listener {
     commands: Commands,
+    /// Handed to the thread that announces what changed, so a slow bus never holds the caller up.
+    published: Option<Sender<State>>,
+    announcer: Option<JoinHandle<()>>,
     _bus: Connection,
 }
 
@@ -175,6 +227,7 @@ impl Listener {
 
     fn claim(name: &str) -> Result<Self, String> {
         let (sender, received) = mpsc::channel();
+        let state = Arc::new(Mutex::new(State::default()));
         let bus = connection::Builder::session()
             .and_then(|builder| builder.name(name))
             // The defaults let a second copy take the name from the first.
@@ -183,11 +236,26 @@ impl Listener {
                     .allow_name_replacements(false)
                     .replace_existing_names(false)
             })
-            .and_then(|builder| builder.serve_at(PATH, Control { commands: sender }))
+            .and_then(|builder| {
+                builder.serve_at(
+                    PATH,
+                    Control {
+                        commands: sender,
+                        state: Arc::clone(&state),
+                    },
+                )
+            })
             .and_then(connection::Builder::build)
             .map_err(|error| error.to_string())?;
+        let (published, states) = mpsc::channel();
+        let announcer = {
+            let bus = bus.clone();
+            thread::spawn(move || announce(&bus, &state, &states))
+        };
         Ok(Self {
             commands: Commands(Arc::new(Mutex::new(received))),
+            published: Some(published),
+            announcer: Some(announcer),
             _bus: bus,
         })
     }
@@ -196,6 +264,60 @@ impl Listener {
     pub fn commands(&self) -> Commands {
         self.commands.clone()
     }
+
+    /// Makes `state` what other processes read, and tells those watching which parts changed.
+    pub fn publish(&self, state: State) {
+        if let Some(published) = &self.published {
+            let _ = published.send(state);
+        }
+    }
+}
+
+impl Drop for Listener {
+    /// Waits for the announcer so the bus name is released by the time this returns.
+    fn drop(&mut self) {
+        drop(self.published.take());
+        if let Some(announcer) = self.announcer.take() {
+            let _ = announcer.join();
+        }
+    }
+}
+
+fn announce(bus: &Connection, shared: &Mutex<State>, states: &Receiver<State>) {
+    while let Ok(next) = states.recv() {
+        let before = std::mem::replace(&mut *lock(shared), next.clone());
+        let changed = changes(&before, &next);
+        if !changed.is_empty() {
+            let _ = bus.emit_signal(
+                None::<&str>,
+                PATH,
+                PROPERTIES,
+                "PropertiesChanged",
+                &(NAME, changed, Vec::<&str>::new()),
+            );
+        }
+    }
+}
+
+/// The properties whose value differs between two states, by their bus names.
+fn changes(before: &State, after: &State) -> HashMap<&'static str, Value<'static>> {
+    let mut changed = HashMap::new();
+    if before.paused != after.paused {
+        changed.insert("Paused", Value::from(after.paused));
+    }
+    if before.popout_open != after.popout_open {
+        changed.insert("PopoutOpen", Value::from(after.popout_open));
+    }
+    if before.window_open != after.window_open {
+        changed.insert("WindowOpen", Value::from(after.window_open));
+    }
+    if before.page != after.page {
+        changed.insert("Page", Value::from(after.page));
+    }
+    if before.recording != after.recording {
+        changed.insert("Recording", Value::from(after.recording));
+    }
+    changed
 }
 
 /// Asks the running application to carry out `command`.
@@ -254,6 +376,10 @@ mod tests {
         format!("dev.weegs.PeepersTest{}{test}", std::process::id())
     }
 
+    fn proxy<'a>(bus: &'a Connection, name: &'a str, interface: &'a str) -> Proxy<'a> {
+        Proxy::new(bus, name, PATH, interface).unwrap()
+    }
+
     #[test]
     fn a_page_is_found_by_its_name_and_only_by_it() {
         assert_eq!(
@@ -262,6 +388,20 @@ mod tests {
         );
         assert_eq!(Command::open_page("Services"), None);
         assert_eq!(Command::open_page(""), None);
+    }
+
+    #[test]
+    fn only_what_differs_is_announced() {
+        let before = State::default();
+        assert!(changes(&before, &before).is_empty());
+        let after = State {
+            paused: true,
+            page: "power",
+            ..State::default()
+        };
+        let mut names: Vec<_> = changes(&before, &after).into_keys().collect();
+        names.sort_unstable();
+        assert_eq!(names, ["Page", "Paused"]);
     }
 
     #[test]
@@ -302,8 +442,7 @@ mod tests {
         let name = test_name("Refuse");
         let listener = Listener::claim(&name).unwrap();
         let bus = Connection::session().unwrap();
-        let error = Proxy::new(&bus, name.as_str(), PATH, NAME)
-            .unwrap()
+        let error = proxy(&bus, &name, NAME)
             .call_method("OpenPage", &("nonsense",))
             .unwrap_err();
         let message = reason(&error);
@@ -313,5 +452,41 @@ mod tests {
         let commands = listener.commands();
         call(&name, Command::TogglePause).unwrap();
         assert_eq!(commands.recv(), Some(Command::TogglePause));
+    }
+
+    #[test]
+    #[ignore = "needs a session bus"]
+    fn the_state_can_be_read_and_a_change_is_announced() {
+        let name = test_name("State");
+        let listener = Listener::claim(&name).unwrap();
+        let bus = Connection::session().unwrap();
+        let properties = proxy(&bus, &name, NAME);
+        assert!(!properties.get_property::<bool>("Paused").unwrap());
+
+        let watch = proxy(&bus, &name, PROPERTIES);
+        let signals = watch.receive_signal("PropertiesChanged").unwrap();
+        let (heard, arrived) = mpsc::channel();
+        thread::spawn(move || {
+            for signal in signals {
+                let body = signal.body();
+                let (_, changed, _): (String, HashMap<String, zvariant::OwnedValue>, Vec<String>) =
+                    body.deserialize().unwrap();
+                let _ = heard.send(changed);
+            }
+        });
+
+        listener.publish(State {
+            paused: true,
+            page: "power",
+            ..State::default()
+        });
+        let changed = arrived
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let mut names: Vec<_> = changed.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["Page", "Paused"]);
+        assert!(properties.get_property::<bool>("Paused").unwrap());
+        assert_eq!(properties.get_property::<String>("Page").unwrap(), "power");
     }
 }
