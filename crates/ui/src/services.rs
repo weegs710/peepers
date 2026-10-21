@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use iced::time;
+use iced::widget::text::Wrapping;
 use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
@@ -94,7 +95,7 @@ impl Services {
         let selected = self.selected.as_ref();
         let columns = [
             table::column("Service", move |service: &Service| {
-                button(text(service.name.clone()))
+                button(text(service.name.clone()).wrapping(Wrapping::WordOrGlyph))
                     .on_press(Message::Select(service.name.clone(), service.bus))
                     .padding([0, 6])
                     .style(if selected == Some(&(service.name.clone(), service.bus)) {
