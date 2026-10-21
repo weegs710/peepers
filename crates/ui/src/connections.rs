@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use peepers_core::connections::{self, Connection, Endpoint, Exposure, Protocol, 
 
 use crate::blocking;
 use crate::processes::Processes;
-use crate::widgets::{scrolling, stats};
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(2);
 
@@ -34,6 +35,37 @@ impl std::fmt::Display for Scope {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Column {
+    #[default]
+    Process,
+    Protocol,
+    LocalEndpoint,
+    RemoteEndpoint,
+    State,
+    Exposure,
+}
+
+impl Sortable for Column {
+    fn descending_first(self) -> bool {
+        false
+    }
+}
+
+impl Column {
+    fn compare(self, a: &Row, b: &Row) -> Ordering {
+        match self {
+            Self::Process => owner_key(a).cmp(&owner_key(b)),
+            Self::Protocol => protocol(a.connection.protocol).cmp(protocol(b.connection.protocol)),
+            Self::LocalEndpoint => endpoint_order(&a.connection.local, &b.connection.local),
+            Self::RemoteEndpoint => endpoint_order(&a.connection.remote, &b.connection.remote),
+            Self::State => state(a.connection.protocol, a.connection.state)
+                .cmp(state(b.connection.protocol, b.connection.state)),
+            Self::Exposure => reach(a.connection).cmp(&reach(b.connection)),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     connections: Vec<Connection>,
@@ -48,11 +80,13 @@ pub enum Message {
     Filter(String),
     UnixSockets(bool),
     Select(Connection),
+    Sort(Column),
 }
 
 #[derive(Debug, Default)]
 pub struct Connections {
     snapshot: Option<Snapshot>,
+    sorting: Sorting<Column>,
     scope: Scope,
     filter: String,
     unix: bool,
@@ -76,6 +110,7 @@ impl Connections {
             Message::Filter(filter) => self.filter = filter,
             Message::UnixSockets(unix) => self.unix = unix,
             Message::Select(connection) => self.selected = Some(connection),
+            Message::Sort(column) => self.sorting.press(column),
         }
         Task::none()
     }
@@ -93,7 +128,7 @@ impl Connections {
                 .get(&connection.inode)
                 .map(|&pid| (pid, processes.name(pid).unwrap_or("?").to_owned()))
         };
-        let rows: Vec<Row> = snapshot
+        let mut rows: Vec<Row> = snapshot
             .connections
             .iter()
             .filter(|connection| self.unix || !is_unix(connection.protocol))
@@ -104,24 +139,34 @@ impl Connections {
             })
             .filter(|row| row.matches(&needle))
             .collect();
+        self.sorting
+            .sort(&mut rows, |column, a, b| column.compare(a, b));
         let count = rows.len();
+        let header = |label, column| {
+            sort_header(label, self.sorting.direction(column), Message::Sort(column))
+        };
 
         let selected = self.selected.as_ref();
         let columns = [
-            table::column("Process", move |row: Row| process_cell(&row, selected)).width(Fill),
-            table::column("Protocol", |row: Row| {
+            table::column(header("Process", Column::Process), move |row: Row| {
+                process_cell(&row, selected)
+            })
+            .width(Fill),
+            table::column(header("Protocol", Column::Protocol), |row: Row| {
                 text(protocol(row.connection.protocol))
             }),
-            table::column("Local endpoint", |row: Row| {
-                text(endpoint(&row.connection.local))
-            }),
-            table::column("Remote endpoint", |row: Row| {
-                text(endpoint(&row.connection.remote))
-            }),
-            table::column("State", |row: Row| {
+            table::column(
+                header("Local endpoint", Column::LocalEndpoint),
+                |row: Row| text(endpoint(&row.connection.local)),
+            ),
+            table::column(
+                header("Remote endpoint", Column::RemoteEndpoint),
+                |row: Row| text(endpoint(&row.connection.remote)),
+            ),
+            table::column(header("State", Column::State), |row: Row| {
                 text(state(row.connection.protocol, row.connection.state))
             }),
-            table::column("Exposure", |row: Row| {
+            table::column(header("Exposure", Column::Exposure), |row: Row| {
                 text(exposure(row.connection).unwrap_or_default())
             }),
         ];
@@ -287,15 +332,154 @@ fn state(protocol: Protocol, state: State) -> &'static str {
     }
 }
 
+/// Whether the socket accepts traffic, which is what gives it an exposure.
+fn accepts(connection: &Connection) -> bool {
+    connection.state == State::Listen
+        || (connection.protocol == Protocol::Udp && connection.state == State::Closed)
+}
+
+/// How far a socket reaches, for ordering: sockets that accept nothing first, then by exposure.
+fn reach(connection: &Connection) -> (bool, Option<Exposure>) {
+    let accepting = accepts(connection);
+    (accepting, connection.exposure().filter(|_| accepting))
+}
+
+/// The process that owns the socket by name and then number, with sockets that have no visible
+/// owner last.
+fn owner_key(row: &Row) -> (bool, String, u32) {
+    row.owner.as_ref().map_or_else(
+        || (true, String::new(), 0),
+        |(pid, name)| (false, name.to_lowercase(), *pid),
+    )
+}
+
+/// Addresses in numeric order, then paths, then sockets without a name.
+fn endpoint_order(a: &Endpoint, b: &Endpoint) -> Ordering {
+    let rank = |endpoint: &Endpoint| match endpoint {
+        Endpoint::Address(_) => 0,
+        Endpoint::Path(_) => 1,
+        Endpoint::None => 2,
+    };
+    match (a, b) {
+        (Endpoint::Address(a), Endpoint::Address(b)) => a.cmp(b),
+        (Endpoint::Path(a), Endpoint::Path(b)) => a.cmp(b),
+        _ => rank(a).cmp(&rank(b)),
+    }
+}
+
 /// Only a socket that accepts traffic has an exposure; an outbound connection has none to speak of.
 fn exposure(connection: &Connection) -> Option<&'static str> {
-    let accepting = connection.state == State::Listen
-        || (connection.protocol == Protocol::Udp && connection.state == State::Closed);
-    accepting.then(|| match connection.exposure() {
+    accepts(connection).then(|| match connection.exposure() {
         None => "Local IPC",
         Some(Exposure::Loopback) => "This computer only",
         Some(Exposure::LocalNetwork) => "Local network",
         Some(Exposure::AllInterfaces) => "All interfaces",
         Some(Exposure::Public) => "Public address",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use super::*;
+    use crate::widgets::pressed;
+
+    fn address(last: u8, port: u16) -> Endpoint {
+        Endpoint::Address(SocketAddr::from((Ipv4Addr::new(10, 0, 0, last), port)))
+    }
+
+    fn connection(protocol: Protocol, local: Endpoint, state: State, inode: u64) -> Connection {
+        Connection {
+            protocol,
+            local,
+            remote: Endpoint::None,
+            state,
+            uid: None,
+            inode,
+        }
+    }
+
+    /// Three sockets whose inode says which is which, owned by `sshd`, nobody visible and `Nginx`.
+    fn sockets() -> Vec<Connection> {
+        vec![
+            connection(Protocol::Tcp, address(9, 80), State::Listen, 1),
+            connection(Protocol::Udp, address(10, 5), State::Established, 2),
+            connection(
+                Protocol::UnixStream,
+                Endpoint::Path("/run/x".to_owned()),
+                State::Closed,
+                3,
+            ),
+        ]
+    }
+
+    fn owners() -> HashMap<u64, u32> {
+        HashMap::from([(1, 20), (3, 10)])
+    }
+
+    fn names(pid: u32) -> &'static str {
+        if pid == 10 { "sshd" } else { "Nginx" }
+    }
+
+    fn ordered(column: Column, again: bool, sockets: &[Connection]) -> Vec<u64> {
+        let mut sorting = Sorting::new(column);
+        if again {
+            sorting.press(column);
+        }
+        let owners = owners();
+        let mut rows: Vec<Row> = sockets
+            .iter()
+            .map(|connection| Row {
+                connection,
+                owner: owners
+                    .get(&connection.inode)
+                    .map(|&pid| (pid, names(pid).to_owned())),
+            })
+            .collect();
+        sorting.sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter().map(|row| row.connection.inode).collect()
+    }
+
+    #[test]
+    fn every_column_orders_the_sockets() {
+        let sockets = sockets();
+        assert_eq!(ordered(Column::Process, false, &sockets), [1, 3, 2]);
+        assert_eq!(ordered(Column::Protocol, false, &sockets), [1, 2, 3]);
+        assert_eq!(ordered(Column::LocalEndpoint, false, &sockets), [1, 2, 3]);
+        assert_eq!(ordered(Column::RemoteEndpoint, false, &sockets), [1, 2, 3]);
+        assert_eq!(ordered(Column::State, false, &sockets), [2, 1, 3]);
+        assert_eq!(ordered(Column::Exposure, false, &sockets), [2, 3, 1]);
+    }
+
+    #[test]
+    fn addresses_order_by_number_and_not_by_their_spelling() {
+        let mut sockets = sockets();
+        sockets.push(connection(
+            Protocol::Tcp,
+            address(9, 8080),
+            State::Listen,
+            4,
+        ));
+        assert_eq!(
+            ordered(Column::LocalEndpoint, false, &sockets),
+            [1, 4, 2, 3]
+        );
+    }
+
+    #[test]
+    fn pressing_a_heading_orders_the_table_by_it() {
+        let mut connections = Connections {
+            snapshot: Some(Snapshot {
+                connections: sockets(),
+                owners: owners(),
+            }),
+            ..Connections::default()
+        };
+        let processes = Processes::default();
+        for message in pressed(connections.view(&processes), "Exposure") {
+            drop(connections.update(message));
+        }
+        assert_eq!(connections.sorting.direction(Column::Exposure), Some(false));
+    }
 }
