@@ -233,6 +233,160 @@ fn a_command_from_another_process_opens_and_closes_the_popout() {
     assert!(!app.windows.popout.is_open());
 }
 
+fn sent(app: &mut Peepers, command: Command) {
+    update(app, Message::Ipc(ipc::Message::Received(command)));
+}
+
+#[test]
+fn another_process_can_show_or_hide_the_popout_without_toggling_it_back() {
+    let mut app = sampled();
+    sent(&mut app, Command::HidePopout);
+    assert!(!app.windows.popout.is_open());
+    sent(&mut app, Command::ShowPopout);
+    let id = app.windows.popout.id().unwrap();
+    sent(&mut app, Command::ShowPopout);
+    assert_eq!(app.windows.popout.id(), Some(id));
+    sent(&mut app, Command::HidePopout);
+    update(&mut app, Message::Window(window::Event::Closed(id)));
+    assert!(!app.windows.popout.is_open());
+}
+
+#[test]
+fn showing_the_popout_while_it_is_closing_opens_it_again() {
+    let mut app = sampled();
+    sent(&mut app, Command::ShowPopout);
+    let first = app.windows.popout.id().unwrap();
+    sent(&mut app, Command::HidePopout);
+    sent(&mut app, Command::ShowPopout);
+    assert_ne!(app.windows.popout.id(), Some(first));
+    update(&mut app, Message::Window(window::Event::Closed(first)));
+    assert!(app.windows.popout.is_open());
+}
+
+#[test]
+fn another_process_can_hide_and_show_the_main_window() {
+    let mut app = sampled();
+    let id = app.windows.main.id().unwrap();
+    sent(&mut app, Command::ToggleWindow);
+    update(&mut app, Message::Window(window::Event::Closed(id)));
+    assert!(!app.windows.main.is_open());
+    sent(&mut app, Command::ToggleWindow);
+    assert!(app.windows.main.is_open());
+}
+
+#[test]
+fn another_process_can_show_or_hide_the_main_window_without_toggling_it_back() {
+    let mut app = sampled();
+    let id = app.windows.main.id().unwrap();
+    sent(&mut app, Command::ShowWindow);
+    assert_eq!(app.windows.main.id(), Some(id));
+    sent(&mut app, Command::HideWindow);
+    sent(&mut app, Command::HideWindow);
+    update(&mut app, Message::Window(window::Event::Closed(id)));
+    assert!(!app.windows.main.is_open());
+    sent(&mut app, Command::HideWindow);
+    assert!(!app.windows.main.is_open());
+    sent(&mut app, Command::ShowWindow);
+    assert!(app.windows.main.is_open());
+}
+
+#[test]
+fn another_process_can_toggle_the_pause() {
+    let mut app = sampled();
+    sent(&mut app, Command::TogglePause);
+    assert!(app.paused);
+    sent(&mut app, Command::TogglePause);
+    assert!(!app.paused);
+}
+
+#[test]
+fn pausing_and_resuming_from_another_process_do_not_toggle() {
+    let mut app = sampled();
+    sent(&mut app, Command::Pause);
+    sent(&mut app, Command::Pause);
+    assert!(app.paused);
+    sent(&mut app, Command::Resume);
+    sent(&mut app, Command::Resume);
+    assert!(!app.paused);
+}
+
+#[test]
+fn another_process_can_record_with_no_window_open() {
+    let mut app = Peepers::default();
+    update(
+        &mut app,
+        Message::Sampled(Arc::new(Sampler::default().sample().unwrap())),
+    );
+    sent(&mut app, Command::StartRecording);
+    assert!(app.flight.status().is_some());
+    sent(&mut app, Command::StopRecording);
+    assert!(app.flight.status().is_none());
+}
+
+#[test]
+fn another_process_can_open_a_page_in_a_closed_window() {
+    let mut app = Peepers::default();
+    sent(&mut app, Command::OpenPage("services"));
+    assert_eq!(app.page, Page::Services);
+    assert!(app.windows.main.is_open());
+}
+
+#[test]
+fn the_bus_names_the_pages_as_the_application_does() {
+    let slugs: Vec<_> = Page::ALL.iter().map(|page| page.slug()).collect();
+    assert_eq!(slugs, PAGES);
+    for page in Page::ALL {
+        assert_eq!(Page::from_slug(page.slug()), Some(page));
+    }
+    assert_eq!(Page::from_slug("nonsense"), None);
+}
+
+#[test]
+fn the_command_line_names_what_it_asks_for() {
+    let asks = |arguments: &[&str]| {
+        parse(
+            &arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(asks(&["--toggle-pop"]), Ok(Command::TogglePopout));
+    assert_eq!(asks(&["--show-pop"]), Ok(Command::ShowPopout));
+    assert_eq!(asks(&["--hide-pop"]), Ok(Command::HidePopout));
+    assert_eq!(asks(&["--toggle-window"]), Ok(Command::ToggleWindow));
+    assert_eq!(asks(&["--show-window"]), Ok(Command::ShowWindow));
+    assert_eq!(asks(&["--hide-window"]), Ok(Command::HideWindow));
+    assert_eq!(asks(&["--toggle-pause"]), Ok(Command::TogglePause));
+    assert_eq!(asks(&["--pause"]), Ok(Command::Pause));
+    assert_eq!(asks(&["--resume"]), Ok(Command::Resume));
+    assert_eq!(asks(&["--flight", "start"]), Ok(Command::StartRecording));
+    assert_eq!(asks(&["--flight", "stop"]), Ok(Command::StopRecording));
+    assert_eq!(asks(&["--quit"]), Ok(Command::Quit));
+    assert_eq!(
+        asks(&["--page", "disk-space"]),
+        Ok(Command::OpenPage("disk-space"))
+    );
+}
+
+#[test]
+fn a_command_line_that_asks_for_nothing_real_is_refused() {
+    let refused = |arguments: &[&str]| {
+        parse(
+            &arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_err()
+    };
+    assert!(refused(&["--page", "nonsense"]).contains("disk-space"));
+    assert!(refused(&["--page"]).starts_with("Unknown option"));
+    assert!(refused(&["--flight", "pause"]).starts_with("Unknown option"));
+    assert!(refused(&["--quit", "now"]).starts_with("Unknown option"));
+    assert!(refused(&["--nonsense"]).starts_with("Unknown option"));
+}
+
 #[test]
 fn the_popout_keeps_the_history_going_with_the_main_window_closed() {
     let mut app = sampled();

@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Element, Fill, Subscription, Task, Theme};
-use peepers_core::ipc::Command;
+use peepers_core::ipc::{Command, PAGES};
 use peepers_core::telemetry::Sample;
 use peepers_core::tray::{Event as Click, Gauges};
 use serde::{Deserialize, Serialize};
@@ -58,30 +58,67 @@ use crate::settings::Preferences;
 use crate::startup::StartupApps;
 use crate::tray::Indicator;
 use crate::users::Users;
-use crate::window::Windows;
+use crate::window::{Window, Windows};
 
-const USAGE: &str = "Usage: peepers [--toggle-pop]";
+const USAGE: &str = "Usage: peepers [OPTION]
+
+Without an option this starts the application. With one it asks the running application to act:
+  --toggle-pop          open the popout, or close it
+  --show-pop            open the popout unless it is open
+  --hide-pop            close the popout if it is open
+  --toggle-window       show the main window, or hide it
+  --show-window         open the main window unless it is open
+  --hide-window         close the main window if it is open
+  --toggle-pause        hold the numbers still, or let them move again
+  --pause               hold the numbers still
+  --resume              let the numbers move again
+  --page NAME           show a page, opening the window if it is closed
+  --flight start|stop   start or stop the flight recorder
+  --quit                end the application";
+
+/// The command a command line asks the running application for.
+fn parse(arguments: &[String]) -> Result<Command, String> {
+    let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    match arguments.as_slice() {
+        ["--toggle-pop"] => Ok(Command::TogglePopout),
+        ["--show-pop"] => Ok(Command::ShowPopout),
+        ["--hide-pop"] => Ok(Command::HidePopout),
+        ["--toggle-window"] => Ok(Command::ToggleWindow),
+        ["--show-window"] => Ok(Command::ShowWindow),
+        ["--hide-window"] => Ok(Command::HideWindow),
+        ["--toggle-pause"] => Ok(Command::TogglePause),
+        ["--pause"] => Ok(Command::Pause),
+        ["--resume"] => Ok(Command::Resume),
+        ["--flight", "start"] => Ok(Command::StartRecording),
+        ["--flight", "stop"] => Ok(Command::StopRecording),
+        ["--quit"] => Ok(Command::Quit),
+        ["--page", name] => Command::open_page(name)
+            .ok_or_else(|| format!("No page called {name}. Pages: {}", PAGES.join(", "))),
+        _ => Err(format!("Unknown option {}", arguments.join(" "))),
+    }
+}
 
 /// What the command line asks for in place of the application, as an exit status.
-fn command_line(argument: &str) -> i32 {
-    match argument {
-        "--toggle-pop" => match peepers_core::ipc::send(Command::TogglePopout) {
+fn command_line(arguments: &[String]) -> i32 {
+    match parse(arguments) {
+        Ok(command) => match peepers_core::ipc::send(command) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("{error}");
                 1
             }
         },
-        other => {
-            eprintln!("Unknown option {other}\n{USAGE}");
+        Err(error) => {
+            eprintln!("{error}\n{USAGE}");
             2
         }
     }
 }
 
 fn main() -> iced::Result {
-    if let Some(argument) = env::args().nth(1) {
-        process::exit(command_line(&argument));
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    if !arguments.is_empty() {
+        process::exit(command_line(&arguments));
     }
     iced::daemon(Peepers::new, Peepers::update, Peepers::view)
         .title(|_: &Peepers, _| "peepers".to_owned())
@@ -183,6 +220,31 @@ impl Page {
         Self::Settings,
     ];
 
+    /// The name the command line and the bus know the page by.
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Processes => "processes",
+            Self::Performance => "performance",
+            Self::Pressure => "pressure",
+            Self::Power => "power",
+            Self::Flight => "flight",
+            Self::Benchmarks => "benchmarks",
+            Self::Connections => "connections",
+            Self::Drivers => "drivers",
+            Self::DiskSpace => "disk-space",
+            Self::Apps => "apps",
+            Self::Info => "info",
+            Self::Services => "services",
+            Self::Startup => "startup",
+            Self::Users => "users",
+            Self::Settings => "settings",
+        }
+    }
+
+    fn from_slug(slug: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|page| page.slug() == slug)
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Processes => "Processes",
@@ -267,6 +329,49 @@ impl Peepers {
         self.preferences.settings.theme()
     }
 
+    fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        self.tray.set_paused(paused);
+    }
+
+    /// Changes the popout the way `change` says, and tells the tray menu how it ended up.
+    fn popout(&mut self, change: fn(&mut Window) -> Task<Message>) -> Task<Message> {
+        let task = change(&mut self.windows.popout);
+        self.tray.set_popout_open(self.windows.popout.is_open());
+        task
+    }
+
+    /// Carries out what another process asked for.
+    fn run(&mut self, command: Command) -> Task<Message> {
+        match command {
+            Command::TogglePopout => self.popout(Window::toggle),
+            Command::ShowPopout => self.popout(Window::show),
+            Command::HidePopout => self.popout(Window::hide),
+            Command::ToggleWindow => self.windows.main.toggle(),
+            Command::ShowWindow => self.windows.main.show(),
+            Command::HideWindow => self.windows.main.hide(),
+            Command::TogglePause => self.update(Message::TogglePause),
+            Command::Pause => {
+                self.set_paused(true);
+                Task::none()
+            }
+            Command::Resume => {
+                self.set_paused(false);
+                Task::none()
+            }
+            Command::StartRecording => self.update(Message::Flight(flight::Message::Start)),
+            Command::StopRecording => self.update(Message::Flight(flight::Message::Stop)),
+            Command::Quit => iced::exit(),
+            Command::OpenPage(name) => match Page::from_slug(name) {
+                Some(page) => {
+                    let window = self.windows.main.reveal();
+                    Task::batch([window, self.update(Message::Navigate(page))])
+                }
+                None => Task::none(),
+            },
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Sampled(sample) => {
@@ -283,15 +388,8 @@ impl Peepers {
                 self.latest = Some(sample);
             }
             Message::Failed(kind) => self.failure = Some(kind),
-            Message::TogglePause => {
-                self.paused = !self.paused;
-                self.tray.set_paused(self.paused);
-            }
-            Message::TogglePopout => {
-                let task = self.windows.popout.toggle();
-                self.tray.set_popout_open(self.windows.popout.is_open());
-                return task;
-            }
+            Message::TogglePause => self.set_paused(!self.paused),
+            Message::TogglePopout => return self.popout(Window::toggle),
             Message::Navigate(page) => {
                 self.page = page;
                 return self.enter();
@@ -346,9 +444,7 @@ impl Peepers {
                 Click::Quit => return iced::exit(),
             },
             Message::Ipc(ipc::Message::Started(result)) => self.door.started(result),
-            Message::Ipc(ipc::Message::Received(Command::TogglePopout)) => {
-                return self.update(Message::TogglePopout);
-            }
+            Message::Ipc(ipc::Message::Received(command)) => return self.run(command),
             Message::Window(event) => {
                 let main = self.windows.main.update(event, self.tray.is_active());
                 let popout = self.windows.popout.update(event, true);

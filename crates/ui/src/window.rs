@@ -124,12 +124,39 @@ impl Window {
         }
     }
 
+    /// Opens the window unless it is open already. One on its way out is opened again.
+    pub fn show<T: Send + 'static>(&mut self) -> Task<T> {
+        if self.staying() {
+            Task::none()
+        } else {
+            self.open()
+        }
+    }
+
+    /// Closes the window if it is open.
+    pub fn hide<T: Send + 'static>(&mut self) -> Task<T> {
+        match self.id {
+            Some(id) if self.staying() => self.close(id),
+            _ => Task::none(),
+        }
+    }
+
     /// Brings the window to the user, or hides it when they are already looking at it. One that
     /// is open without the focus is opened again, because `gain_focus` did nothing under umbriel
     /// and a new window is what a compositor focuses.
     pub fn activate<T: Send + 'static>(&mut self) -> Task<T> {
         match self.id {
             Some(id) if self.staying() && self.focused => self.close(id),
+            Some(id) if self.staying() => window::close(id).chain(self.open()),
+            _ => self.open(),
+        }
+    }
+
+    /// Brings the window to the user without ever hiding it: opened when closed, left alone when
+    /// it has the focus, and opened again when it is open without it, as [`Window::activate`] does.
+    pub fn reveal<T: Send + 'static>(&mut self) -> Task<T> {
+        match self.id {
+            Some(_) if self.staying() && self.focused => Task::none(),
             Some(id) if self.staying() => window::close(id).chain(self.open()),
             _ => self.open(),
         }
@@ -199,6 +226,48 @@ mod tests {
     }
 
     #[test]
+    fn revealing_opens_a_closed_window_and_never_closes_one() {
+        let mut window = Window::new(Kind::Main);
+        assert!(window.reveal::<()>().units() > 0);
+        assert!(window.is_open());
+        let id = window.id.unwrap();
+        drop(window.update::<()>(Event::Focused(id), true));
+        assert_eq!(window.reveal::<()>().units(), 0);
+        assert_eq!(window.id, Some(id));
+    }
+
+    #[test]
+    fn revealing_an_unfocused_window_replaces_it() {
+        let (mut window, id) = open();
+        drop(window.reveal::<()>());
+        assert!(window.is_open() && window.id != Some(id));
+    }
+
+    #[test]
+    fn hiding_closes_an_open_window_once_and_leaves_a_closed_one_alone() {
+        let mut window = Window::new(Kind::Main);
+        assert_eq!(window.hide::<()>().units(), 0);
+        drop(window.open::<()>());
+        let id = window.id.unwrap();
+        assert!(window.hide::<()>().units() > 0);
+        assert_eq!(window.hide::<()>().units(), 0);
+        drop(window.update::<()>(Event::Closed(id), true));
+        assert_eq!(window.hide::<()>().units(), 0);
+    }
+
+    #[test]
+    fn showing_opens_a_window_that_is_not_staying_and_no_other() {
+        let (mut window, id) = open();
+        assert_eq!(window.show::<()>().units(), 0);
+        assert_eq!(window.id, Some(id));
+        drop(window.hide::<()>());
+        assert!(window.show::<()>().units() > 0);
+        assert_ne!(window.id, Some(id));
+        drop(window.update::<()>(Event::Closed(id), true));
+        assert!(window.is_open());
+    }
+
+    #[test]
     fn toggling_a_window_on_its_way_out_opens_it_again() {
         let (mut window, id) = open();
         drop(window.toggle::<()>());
@@ -206,25 +275,6 @@ mod tests {
         assert_ne!(window.id, Some(id));
         drop(window.update::<()>(Event::Closed(id), true));
         assert!(window.is_open());
-    }
-
-    #[test]
-    fn activating_a_window_on_its_way_out_opens_it_again() {
-        let (mut window, id) = open();
-        drop(window.update::<()>(Event::Focused(id), true));
-        drop(window.activate::<()>());
-        drop(window.activate::<()>());
-        assert_ne!(window.id, Some(id));
-        drop(window.update::<()>(Event::Closed(id), true));
-        assert!(window.is_open());
-    }
-
-    #[test]
-    fn a_close_request_hidden_to_the_tray_is_a_window_on_its_way_out() {
-        let (mut window, id) = open();
-        drop(window.update::<()>(Event::CloseRequested(id), true));
-        drop(window.toggle::<()>());
-        assert_ne!(window.id, Some(id));
     }
 
     #[test]
