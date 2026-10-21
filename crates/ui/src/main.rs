@@ -112,6 +112,8 @@ struct Peepers {
     windows: Windows,
     tray: Indicator,
     door: Door,
+    /// The newest reading, kept whether or not a window is open to show it.
+    latest: Option<Arc<Sample>>,
     /// Whether new samples are kept from the pages, so what is on screen holds still.
     paused: bool,
 }
@@ -278,6 +280,7 @@ impl Peepers {
                     }
                     self.history.push(sample.vitals.clone());
                 }
+                self.latest = Some(sample);
             }
             Message::Failed(kind) => self.failure = Some(kind),
             Message::TogglePause => {
@@ -315,7 +318,7 @@ impl Peepers {
             Message::Flight(message) => {
                 return self
                     .flight
-                    .update(message, self.history.latest())
+                    .update(message, self.latest.as_deref().map(|sample| &sample.vitals))
                     .map(Message::Flight);
             }
             Message::Benchmarks(message) => {

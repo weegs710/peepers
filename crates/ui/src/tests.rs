@@ -248,6 +248,18 @@ fn the_popout_keeps_the_history_going_with_the_main_window_closed() {
 }
 
 #[test]
+fn a_recording_starts_from_the_newest_sample_with_no_window_open() {
+    let mut app = Peepers::default();
+    update(
+        &mut app,
+        Message::Sampled(Arc::new(Sampler::default().sample().unwrap())),
+    );
+    assert!(app.history.latest().is_none());
+    update(&mut app, Message::Flight(flight::Message::Start));
+    assert!(app.flight.status().is_some());
+}
+
+#[test]
 fn recordings_are_listed_and_deleting_asks_before_it_deletes() {
     let mut app = sampled();
     update(&mut app, Message::Navigate(Page::Flight));
