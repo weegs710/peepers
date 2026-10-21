@@ -1,16 +1,17 @@
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::{button, column, container, progress_bar, row, space, table, text, text_input};
 use iced::{Element, Fill, Length, Right, Subscription, Task};
-use peepers_core::scan::{Progress, Report, Scan};
+use peepers_core::scan::{Entry, FileType, Progress, Report, Scan};
 use peepers_core::volumes::{self, Volume};
 
 use crate::blocking;
 use crate::format;
 use crate::graph::level;
-use crate::widgets::scrolling;
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 const POLL: Duration = Duration::from_millis(250);
 
@@ -21,8 +22,60 @@ pub enum Tab {
     Types,
 }
 
+/// The columns of the folders and files tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EntryColumn {
+    Path,
+    #[default]
+    Size,
+    Share,
+}
+
+impl Sortable for EntryColumn {
+    fn descending_first(self) -> bool {
+        self != Self::Path
+    }
+}
+
+impl EntryColumn {
+    fn compare(self, a: &Entry, b: &Entry) -> Ordering {
+        match self {
+            Self::Path => a.path.cmp(&b.path),
+            Self::Size | Self::Share => a.bytes.cmp(&b.bytes),
+        }
+    }
+}
+
+/// The columns of the file types table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TypeColumn {
+    Type,
+    Files,
+    #[default]
+    Size,
+    Share,
+}
+
+impl Sortable for TypeColumn {
+    fn descending_first(self) -> bool {
+        self != Self::Type
+    }
+}
+
+impl TypeColumn {
+    fn compare(self, a: &FileType, b: &FileType) -> Ordering {
+        match self {
+            Self::Type => a.extension.to_lowercase().cmp(&b.extension.to_lowercase()),
+            Self::Files => a.files.cmp(&b.files),
+            Self::Size | Self::Share => a.bytes.cmp(&b.bytes),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
+    SortEntries(EntryColumn),
+    SortTypes(TypeColumn),
     Volumes(Vec<Volume>),
     Path(String),
     Start(PathBuf),
@@ -39,6 +92,8 @@ pub struct DiskSpace {
     progress: Progress,
     report: Option<Report>,
     tab: Tab,
+    entries: Sorting<EntryColumn>,
+    types: Sorting<TypeColumn>,
 }
 
 impl Default for DiskSpace {
@@ -50,6 +105,8 @@ impl Default for DiskSpace {
             progress: Progress { files: 0, bytes: 0 },
             report: None,
             tab: Tab::Folders,
+            entries: Sorting::default(),
+            types: Sorting::default(),
         }
     }
 }
@@ -93,6 +150,8 @@ impl DiskSpace {
                 }
             }
             Message::Tab(tab) => self.tab = tab,
+            Message::SortEntries(column) => self.entries.press(column),
+            Message::SortTypes(column) => self.types.press(column),
         }
         Task::none()
     }
@@ -207,29 +266,51 @@ impl DiskSpace {
         };
         match self.tab {
             Tab::Folders | Tab::Files => {
-                let entries = if self.tab == Tab::Folders {
+                let mut entries: Vec<&Entry> = if self.tab == Tab::Folders {
                     &report.folders
                 } else {
                     &report.largest_files
+                }
+                .iter()
+                .collect();
+                self.entries
+                    .sort(&mut entries, |column, a, b| column.compare(a, b));
+                let header = |label, column| {
+                    sort_header(
+                        label,
+                        self.entries.direction(column),
+                        Message::SortEntries(column),
+                    )
                 };
                 let columns = [
-                    table::column("Path", |entry: &'a peepers_core::scan::Entry| {
+                    table::column(header("Path", EntryColumn::Path), |entry: &'a Entry| {
                         text(entry.path.display().to_string())
                     })
                     .width(Fill),
-                    table::column("Size", |entry: &'a peepers_core::scan::Entry| {
+                    table::column(header("Size", EntryColumn::Size), |entry: &'a Entry| {
                         text(format::bytes(entry.bytes))
                     })
                     .align_x(Right),
-                    table::column("Share", move |entry: &'a peepers_core::scan::Entry| {
-                        share(entry.bytes).length(140)
-                    }),
+                    table::column(
+                        header("Share", EntryColumn::Share),
+                        move |entry: &'a Entry| share(entry.bytes).length(140),
+                    ),
                 ];
                 table(columns, entries).padding_x(10).padding_y(2).into()
             }
             Tab::Types => {
+                let mut kinds: Vec<&FileType> = report.types.iter().collect();
+                self.types
+                    .sort(&mut kinds, |column, a, b| column.compare(a, b));
+                let header = |label, column| {
+                    sort_header(
+                        label,
+                        self.types.direction(column),
+                        Message::SortTypes(column),
+                    )
+                };
                 let columns = [
-                    table::column("Type", |kind: &'a peepers_core::scan::FileType| {
+                    table::column(header("Type", TypeColumn::Type), |kind: &'a FileType| {
                         text(if kind.extension.is_empty() {
                             "(no extension)".to_owned()
                         } else {
@@ -237,23 +318,118 @@ impl DiskSpace {
                         })
                     })
                     .width(Fill),
-                    table::column("Files", |kind: &'a peepers_core::scan::FileType| {
+                    table::column(header("Files", TypeColumn::Files), |kind: &'a FileType| {
                         text(kind.files)
                     })
                     .align_x(Right),
-                    table::column("Size", |kind: &'a peepers_core::scan::FileType| {
+                    table::column(header("Size", TypeColumn::Size), |kind: &'a FileType| {
                         text(format::bytes(kind.bytes))
                     })
                     .align_x(Right),
-                    table::column("Share", move |kind: &'a peepers_core::scan::FileType| {
-                        share(kind.bytes).length(140)
-                    }),
+                    table::column(
+                        header("Share", TypeColumn::Share),
+                        move |kind: &'a FileType| share(kind.bytes).length(140),
+                    ),
                 ];
-                table(columns, &report.types)
-                    .padding_x(10)
-                    .padding_y(2)
-                    .into()
+                table(columns, kinds).padding_x(10).padding_y(2).into()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use peepers_core::scan::Report;
+
+    use super::*;
+    use crate::widgets::pressed;
+
+    fn entry(path: &str, bytes: u64) -> Entry {
+        Entry {
+            path: PathBuf::from(path),
+            bytes,
+        }
+    }
+
+    fn kind(extension: &str, files: u64, bytes: u64) -> FileType {
+        FileType {
+            extension: extension.to_owned(),
+            files,
+            bytes,
+        }
+    }
+
+    fn ordered_entries(column: EntryColumn, again: bool, entries: &[Entry]) -> Vec<&str> {
+        let mut sorting = Sorting::new(column);
+        if again {
+            sorting.press(column);
+        }
+        let mut rows: Vec<&Entry> = entries.iter().collect();
+        sorting.sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter()
+            .map(|row| row.path.to_str().unwrap())
+            .collect()
+    }
+
+    fn ordered_types(column: TypeColumn, kinds: &[FileType]) -> Vec<&str> {
+        let mut rows: Vec<&FileType> = kinds.iter().collect();
+        Sorting::new(column).sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter().map(|row| row.extension.as_str()).collect()
+    }
+
+    #[test]
+    fn every_column_orders_the_folders_and_files() {
+        let entries = [entry("/b", 10), entry("/c", 30), entry("/a", 20)];
+        assert_eq!(
+            ordered_entries(EntryColumn::Path, false, &entries),
+            ["/a", "/b", "/c"]
+        );
+        assert_eq!(
+            ordered_entries(EntryColumn::Size, false, &entries),
+            ["/c", "/a", "/b"]
+        );
+        assert_eq!(
+            ordered_entries(EntryColumn::Share, false, &entries),
+            ["/c", "/a", "/b"]
+        );
+        assert_eq!(
+            ordered_entries(EntryColumn::Size, true, &entries),
+            ["/b", "/a", "/c"]
+        );
+    }
+
+    #[test]
+    fn every_column_orders_the_file_types() {
+        let kinds = [kind("rs", 5, 100), kind("", 9, 50), kind("PNG", 2, 400)];
+        assert_eq!(ordered_types(TypeColumn::Type, &kinds), ["", "PNG", "rs"]);
+        assert_eq!(ordered_types(TypeColumn::Files, &kinds), ["", "rs", "PNG"]);
+        assert_eq!(ordered_types(TypeColumn::Size, &kinds), ["PNG", "rs", ""]);
+        assert_eq!(ordered_types(TypeColumn::Share, &kinds), ["PNG", "rs", ""]);
+    }
+
+    #[test]
+    fn pressing_a_heading_orders_each_table_by_it() {
+        let report = Report {
+            root: PathBuf::from("/"),
+            bytes: 100,
+            files: 3,
+            folders: vec![entry("/a", 10)],
+            largest_files: vec![entry("/a/f", 10)],
+            types: vec![kind("rs", 1, 10)],
+            complete: true,
+        };
+        let mut disks = DiskSpace {
+            report: Some(report),
+            ..DiskSpace::default()
+        };
+        for message in pressed(disks.view(), "Path") {
+            drop(disks.update(message));
+        }
+        assert_eq!(disks.entries.direction(EntryColumn::Path), Some(false));
+        drop(disks.update(Message::Tab(Tab::Types)));
+        for message in pressed(disks.view(), "Files") {
+            drop(disks.update(message));
+        }
+        assert_eq!(disks.types.direction(TypeColumn::Files), Some(true));
     }
 }
