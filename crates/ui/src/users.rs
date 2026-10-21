@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -10,14 +11,44 @@ use peepers_core::sessions::{self, Action, Session};
 use crate::blocking;
 use crate::format;
 use crate::processes::Processes;
-use crate::widgets::scrolling;
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 const REFRESH: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Column {
+    User,
+    Sessions,
+    Processes,
+    Cpu,
+    #[default]
+    Memory,
+}
+
+impl Sortable for Column {
+    /// Numbers read best largest first, names smallest first.
+    fn descending_first(self) -> bool {
+        self != Self::User
+    }
+}
+
+impl Column {
+    fn compare(self, a: &Row, b: &Row) -> Ordering {
+        match self {
+            Self::User => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            Self::Sessions => a.sessions.cmp(&b.sessions),
+            Self::Processes => a.usage.processes.cmp(&b.usage.processes),
+            Self::Cpu => a.usage.cpu.total_cmp(&b.usage.cpu),
+            Self::Memory => a.usage.memory.cmp(&b.usage.memory),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Refresh,
     Loaded(Result<Vec<Session>, String>),
+    Sort(Column),
     Select(u32),
     Control(Action),
     Done(Result<(), String>),
@@ -26,6 +57,7 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Users {
     sessions: Vec<Session>,
+    sorting: Sorting<Column>,
     selected: Option<u32>,
     notice: Option<(String, bool)>,
 }
@@ -58,6 +90,7 @@ impl Users {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Sort(column) => self.sorting.press(column),
             Message::Refresh => return Self::enter(),
             Message::Loaded(Ok(sessions)) => self.sessions = sessions,
             Message::Loaded(Err(error)) => {
@@ -109,11 +142,14 @@ impl Users {
                 usage,
             })
             .collect();
-        rows.sort_by_key(|row| std::cmp::Reverse(row.usage.memory));
+        self.sorting.sort(&mut rows, Column::compare);
+        let header = |label, column| {
+            sort_header(label, self.sorting.direction(column), Message::Sort(column))
+        };
 
         let selected = self.selected;
         let columns = [
-            table::column("User", move |row: Row| {
+            table::column(header("User", Column::User), move |row: Row| {
                 button(text(row.name))
                     .on_press(Message::Select(row.uid))
                     .padding([0, 6])
@@ -124,11 +160,22 @@ impl Users {
                     })
             })
             .width(Fill),
-            table::column("Sessions", |row: Row| text(row.sessions)).align_x(Right),
-            table::column("Processes", |row: Row| text(row.usage.processes)).align_x(Right),
-            table::column("CPU", |row: Row| text(format!("{:.1}%", row.usage.cpu))).align_x(Right),
-            table::column("Memory", |row: Row| text(format::bytes(row.usage.memory)))
-                .align_x(Right),
+            table::column(header("Sessions", Column::Sessions), |row: Row| {
+                text(row.sessions)
+            })
+            .align_x(Right),
+            table::column(header("Processes", Column::Processes), |row: Row| {
+                text(row.usage.processes)
+            })
+            .align_x(Right),
+            table::column(header("CPU", Column::Cpu), |row: Row| {
+                text(format!("{:.1}%", row.usage.cpu))
+            })
+            .align_x(Right),
+            table::column(header("Memory", Column::Memory), |row: Row| {
+                text(format::bytes(row.usage.memory))
+            })
+            .align_x(Right),
         ];
 
         let actions = selected.map(|uid| {
@@ -188,6 +235,75 @@ mod tests {
     use peepers_core::process::State;
 
     use super::*;
+    use crate::widgets::pressed;
+
+    /// The rows in the order pressing `column` once puts them, or twice with `again`.
+    fn ordered(column: Column, again: bool, rows: &[Row]) -> Vec<&str> {
+        let mut sorting = Sorting::new(column);
+        if again {
+            sorting.press(column);
+        }
+        let mut rows: Vec<&Row> = rows.iter().collect();
+        sorting.sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter().map(|row| row.name.as_str()).collect()
+    }
+
+    fn row(name: &str, sessions: usize, processes: usize, cpu: f32, memory: u64) -> Row {
+        Row {
+            uid: 0,
+            name: name.to_owned(),
+            sessions,
+            usage: Usage {
+                processes,
+                cpu,
+                memory,
+            },
+        }
+    }
+
+    fn people() -> Vec<Row> {
+        vec![
+            row("weegs", 2, 300, 5.5, 4_000),
+            row("Root", 0, 80, 1.0, 9_000),
+            row("jellyfin", 0, 20, 12.0, 1_000),
+        ]
+    }
+
+    #[test]
+    fn every_column_orders_the_users_and_memory_leads_by_default() {
+        let people = people();
+        assert_eq!(
+            ordered(Column::User, false, &people),
+            ["jellyfin", "Root", "weegs"]
+        );
+        assert_eq!(ordered(Column::Sessions, false, &people)[0], "weegs");
+        assert_eq!(
+            ordered(Column::Processes, false, &people),
+            ["weegs", "Root", "jellyfin"]
+        );
+        assert_eq!(
+            ordered(Column::Cpu, false, &people),
+            ["jellyfin", "weegs", "Root"]
+        );
+        assert_eq!(
+            ordered(Column::Memory, false, &people),
+            ["Root", "weegs", "jellyfin"]
+        );
+        assert_eq!(
+            Sorting::<Column>::default().direction(Column::Memory),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn pressing_a_heading_orders_the_table_by_it() {
+        let mut users = Users::default();
+        let processes = Processes::default();
+        for message in pressed(users.view(&processes), "CPU") {
+            drop(users.update(message));
+        }
+        assert_eq!(users.sorting.direction(Column::Cpu), Some(true));
+    }
 
     fn process(uid: u32, cpu: f32, memory: u64) -> Process {
         Process {
