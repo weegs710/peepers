@@ -2,7 +2,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,33 @@ pub const VERSION: u32 = 1;
 
 /// Two days at one sample per second.
 const MAX_FRAMES: usize = 172_800;
+/// The most a recording file may measure. A recording stops growing before it passes this, so
+/// that whatever is saved can be loaded again.
 const MAX_FILE_BYTES: u64 = 256 << 20;
+/// How many of the latest samples say how fast new ones are arriving.
+const PACE_WINDOW: usize = 30;
+
+/// How far a recording may grow, in samples and in the size of the file it is saved as.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    frames: usize,
+    bytes: u64,
+}
+
+impl Limits {
+    const DEFAULT: Self = Self {
+        frames: MAX_FRAMES,
+        bytes: MAX_FILE_BYTES,
+    };
+}
+
+/// How many bytes `value` takes written as JSON, which is how a recording is saved.
+fn json_length(value: &impl Serialize) -> u64 {
+    serde_json::to_vec(value)
+        .ok()
+        .and_then(|bytes| u64::try_from(bytes.len()).ok())
+        .unwrap_or(u64::MAX)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channel {
@@ -86,11 +112,20 @@ pub struct Recorder {
     header: Header,
     frames: Vec<Frame>,
     started: Instant,
+    limits: Limits,
+    /// What the file measures now, to the byte.
+    bytes: u64,
+    /// What the file would measure with no samples in it.
+    skeleton: u64,
 }
 
 impl Recorder {
     #[must_use]
     pub fn start(first: &Vitals) -> Self {
+        Self::within(first, Limits::DEFAULT)
+    }
+
+    fn within(first: &Vitals, limits: Limits) -> Self {
         let text = |path: &str| {
             fs::read_to_string(path)
                 .map(|text| text.trim().to_owned())
@@ -128,25 +163,65 @@ impl Recorder {
                 })
                 .collect(),
         };
-        let frames = vec![frame(&header, first, 0.0)];
+        let first = frame(&header, first, 0.0);
+        let skeleton = json_length(&Trace {
+            header: header.clone(),
+            frames: Vec::new(),
+        });
         Self {
+            bytes: skeleton.saturating_add(json_length(&first)),
+            skeleton,
             header,
-            frames,
+            frames: vec![first],
             started: Instant::now(),
+            limits,
         }
     }
 
-    /// Adds a frame. Returns `false` once the recording has reached its limit.
+    /// Adds a frame. Returns `false` once the recording has reached a limit: the most samples it
+    /// may hold, or the most the file it is saved as may measure.
     pub fn record(&mut self, vitals: &Vitals) -> bool {
-        if self.frames.len() >= MAX_FRAMES {
+        let next = frame(&self.header, vitals, self.started.elapsed().as_secs_f32());
+        // A comma separates it from the frame before.
+        let added = json_length(&next).saturating_add(1);
+        if self.frames.len() >= self.limits.frames
+            || self.bytes.saturating_add(added) > self.limits.bytes
+        {
             return false;
         }
-        self.frames.push(frame(
-            &self.header,
-            vitals,
-            self.started.elapsed().as_secs_f32(),
-        ));
+        self.bytes += added;
+        self.frames.push(next);
         true
+    }
+
+    /// How long the recording covers so far.
+    #[must_use]
+    pub fn elapsed(&self) -> Duration {
+        Duration::try_from_secs_f32(self.frames.last().map_or(0.0, |frame| frame.seconds))
+            .unwrap_or_default()
+    }
+
+    /// How much longer it can run at the rate samples are arriving, which is whichever limit it
+    /// would reach first. `None` until two samples show that rate.
+    #[must_use]
+    pub fn remaining(&self) -> Option<Duration> {
+        let recent = &self.frames[self.frames.len().saturating_sub(PACE_WINDOW + 1)..];
+        let gaps = u16::try_from(recent.len() - 1)
+            .ok()
+            .filter(|gaps| *gaps > 0)?;
+        let span = recent.last()?.seconds - recent.first()?.seconds;
+        let pace = f64::from(span) / f64::from(gaps);
+        let each = ((self.bytes - self.skeleton) / u64::try_from(self.frames.len()).ok()?).max(1);
+        let by_size = usize::try_from(self.limits.bytes.saturating_sub(self.bytes) / each).ok()?;
+        let by_count = self.limits.frames.saturating_sub(self.frames.len());
+        let left = u32::try_from(by_size.min(by_count)).ok()?;
+        Duration::try_from_secs_f64(pace * f64::from(left)).ok()
+    }
+
+    /// What the file this would be saved as measures, in bytes.
+    #[must_use]
+    pub fn size(&self) -> u64 {
+        self.bytes
     }
 
     #[must_use]
@@ -513,6 +588,131 @@ mod tests {
             .resize(MAX_FRAMES, recorder.frames[0].clone());
         assert!(!recorder.record(&first));
         assert_eq!(recorder.frames(), MAX_FRAMES);
+    }
+
+    /// A recorder holding `seconds` as its samples' times, with the size of that many samples.
+    fn recorder_at(seconds: &[f32], limits: Limits) -> Recorder {
+        let first = vitals();
+        let mut recorder = Recorder::within(&first, limits);
+        let template = recorder.frames[0].clone();
+        recorder.frames = seconds
+            .iter()
+            .map(|seconds| Frame {
+                seconds: *seconds,
+                ..template.clone()
+            })
+            .collect();
+        let each = json_length(&template) + 1;
+        let held = u64::try_from(seconds.len()).unwrap();
+        recorder.bytes = recorder.skeleton + held * each - 1;
+        recorder
+    }
+
+    fn evenly(count: u16, apart: f32) -> Vec<f32> {
+        (0..count).map(|index| f32::from(index) * apart).collect()
+    }
+
+    #[test]
+    fn the_size_kept_while_recording_is_the_size_of_the_saved_file() {
+        let first = vitals();
+        let mut recorder = Recorder::start(&first);
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_millis(3));
+            assert!(recorder.record(&first));
+        }
+        let size = recorder.size();
+        let trace = recorder.finish();
+        assert_eq!(size, json_length(&trace));
+        assert_eq!(
+            size,
+            u64::try_from(serde_json::to_string(&trace).unwrap().len()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_recording_stops_at_its_size_limit_and_still_fits_it() {
+        let first = vitals();
+        let probe = Recorder::start(&first);
+        let each = json_length(&frame(&probe.header, &first, 0.012_345_6)) + 1;
+        let limits = Limits {
+            frames: MAX_FRAMES,
+            bytes: probe.size() + 2 * each + each / 2,
+        };
+        let mut recorder = Recorder::within(&first, limits);
+        while recorder.record(&first) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(recorder.frames(), 3);
+        assert!(!recorder.record(&first));
+        assert!(recorder.size() <= limits.bytes);
+        let trace = recorder.finish();
+        assert!(json_length(&trace) <= limits.bytes);
+        assert_eq!(trace.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_recording_stops_at_its_sample_limit() {
+        let first = vitals();
+        let limits = Limits {
+            frames: 2,
+            bytes: u64::MAX,
+        };
+        let mut recorder = Recorder::within(&first, limits);
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(recorder.record(&first));
+        assert!(!recorder.record(&first));
+        assert_eq!(recorder.frames(), 2);
+    }
+
+    #[test]
+    fn the_time_covered_is_where_the_latest_sample_sits() {
+        let recorder = recorder_at(&evenly(3, 1.0), Limits::DEFAULT);
+        assert_eq!(recorder.elapsed(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_time_left_is_what_the_sample_limit_leaves_at_the_pace_samples_arrive() {
+        let limits = Limits {
+            frames: 10,
+            bytes: u64::MAX,
+        };
+        let recorder = recorder_at(&evenly(3, 1.0), limits);
+        assert_eq!(recorder.remaining(), Some(Duration::from_secs(7)));
+        let slower = recorder_at(&evenly(3, 5.0), limits);
+        assert_eq!(slower.remaining(), Some(Duration::from_secs(35)));
+    }
+
+    #[test]
+    fn the_time_left_is_what_the_size_limit_leaves_when_that_comes_first() {
+        let mut recorder = recorder_at(
+            &evenly(4, 1.0),
+            Limits {
+                frames: 1_000,
+                bytes: u64::MAX,
+            },
+        );
+        let each = (recorder.bytes - recorder.skeleton) / 4;
+        recorder.limits.bytes = recorder.bytes + 2 * each + each / 2;
+        assert_eq!(recorder.remaining(), Some(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn the_time_left_follows_the_pace_of_the_latest_samples() {
+        let mut seconds = evenly(20, 1.0);
+        let start = *seconds.last().unwrap();
+        seconds.extend((1..=31_u16).map(|step| start + f32::from(step) * 5.0));
+        let limits = Limits {
+            frames: 100,
+            bytes: u64::MAX,
+        };
+        let recorder = recorder_at(&seconds, limits);
+        assert_eq!(recorder.remaining(), Some(Duration::from_secs(49 * 5)));
+    }
+
+    #[test]
+    fn nothing_is_said_about_the_time_left_until_two_samples_show_the_pace() {
+        let recorder = recorder_at(&evenly(1, 1.0), Limits::DEFAULT);
+        assert_eq!(recorder.remaining(), None);
     }
 
     #[test]

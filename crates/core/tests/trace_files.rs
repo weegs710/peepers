@@ -26,6 +26,18 @@ fn a_saved_trace_loads_back_identical() {
 }
 
 #[test]
+fn a_saved_file_measures_what_the_recorder_said_it_would() {
+    let directory = directory("size");
+    let vitals = Sampler::default().sample().unwrap().vitals;
+    let mut recorder = Recorder::start(&vitals);
+    recorder.record(&vitals);
+    recorder.record(&vitals);
+    let size = recorder.size();
+    let path = recorder.finish().save(&directory, "run").unwrap();
+    assert_eq!(fs::metadata(path).unwrap().len(), size);
+}
+
+#[test]
 fn saving_never_replaces_an_existing_recording() {
     let directory = directory("no-overwrite");
     let trace = recording();
