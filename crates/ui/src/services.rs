@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::time::Duration;
 
 use iced::time;
@@ -7,14 +8,44 @@ use iced::{Element, Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
 
 use crate::blocking;
-use crate::widgets::{scrolling, stats};
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Column {
+    #[default]
+    Service,
+    Description,
+    Status,
+    Manager,
+}
+
+impl Sortable for Column {
+    fn descending_first(self) -> bool {
+        false
+    }
+}
+
+impl Column {
+    fn compare(self, a: &Service, b: &Service) -> Ordering {
+        match self {
+            Self::Service => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            Self::Description => a
+                .description
+                .to_lowercase()
+                .cmp(&b.description.to_lowercase()),
+            Self::Status => status(a).cmp(&status(b)),
+            Self::Manager => a.bus.cmp(&b.bus),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Refresh,
     Loaded(Result<Vec<Service>, String>),
+    Sort(Column),
     Filter(String),
     RunningOnly(bool),
     Select(String, Bus),
@@ -25,6 +56,7 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Services {
     list: Option<Vec<Service>>,
+    sorting: Sorting<Column>,
     filter: String,
     running_only: bool,
     selected: Option<(String, Bus)>,
@@ -50,6 +82,7 @@ impl Services {
                     true,
                 ));
             }
+            Message::Sort(column) => self.sorting.press(column),
             Message::Filter(filter) => self.filter = filter,
             Message::RunningOnly(running_only) => self.running_only = running_only,
             Message::Select(name, bus) => {
@@ -82,7 +115,7 @@ impl Services {
             .into();
         };
         let needle = self.filter.to_lowercase();
-        let rows: Vec<&Service> = list
+        let mut rows: Vec<&Service> = list
             .iter()
             .filter(|service| !self.running_only || service.active == Active::Active)
             .filter(|service| {
@@ -90,33 +123,42 @@ impl Services {
                     || service.description.to_lowercase().contains(&needle)
             })
             .collect();
+        self.sorting
+            .sort(&mut rows, |column, a, b| column.compare(a, b));
         let count = rows.len();
+        let header = |label, column| {
+            sort_header(label, self.sorting.direction(column), Message::Sort(column))
+        };
 
         let selected = self.selected.as_ref();
         let columns = [
-            table::column("Service", move |service: &Service| {
-                button(text(service.name.clone()).wrapping(Wrapping::WordOrGlyph))
-                    .on_press(Message::Select(service.name.clone(), service.bus))
-                    .padding([0, 6])
-                    .style(if selected == Some(&(service.name.clone(), service.bus)) {
-                        button::primary
-                    } else {
-                        button::text
-                    })
-            })
+            table::column(
+                header("Service", Column::Service),
+                move |service: &Service| {
+                    button(text(service.name.clone()).wrapping(Wrapping::WordOrGlyph))
+                        .on_press(Message::Select(service.name.clone(), service.bus))
+                        .padding([0, 6])
+                        .style(if selected == Some(&(service.name.clone(), service.bus)) {
+                            button::primary
+                        } else {
+                            button::text
+                        })
+                },
+            )
             .width(Fill),
-            table::column("Description", |service: &Service| {
-                text(service.description.clone())
-            })
+            table::column(
+                header("Description", Column::Description),
+                |service: &Service| text(service.description.clone()),
+            )
             .width(Fill),
-            table::column("Status", |service: &Service| {
+            table::column(header("Status", Column::Status), |service: &Service| {
                 text(status(service)).style(match service.active {
                     Active::Active => text::success,
                     Active::Failed => text::danger,
                     _ => text::default,
                 })
             }),
-            table::column("Manager", |service: &Service| {
+            table::column(header("Manager", Column::Manager), |service: &Service| {
                 text(if service.bus == Bus::System {
                     "System"
                 } else {
@@ -220,6 +262,75 @@ fn capitalize(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::pressed;
+
+    /// The rows in the order pressing `column` once puts them, or twice with `again`.
+    fn ordered(column: Column, again: bool, rows: &[Service]) -> Vec<&str> {
+        let mut sorting = Sorting::new(column);
+        if again {
+            sorting.press(column);
+        }
+        let mut rows: Vec<&Service> = rows.iter().collect();
+        sorting.sort(&mut rows, |column, a, b| column.compare(a, b));
+        rows.into_iter().map(|row| row.name.as_str()).collect()
+    }
+
+    fn named(name: &str, description: &str, bus: Bus, active: Active) -> Service {
+        Service {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            bus,
+            load: "loaded".to_owned(),
+            sub: if active == Active::Active {
+                "running"
+            } else {
+                "dead"
+            }
+            .to_owned(),
+            active,
+        }
+    }
+
+    fn units() -> Vec<Service> {
+        vec![
+            named("sshd.service", "Secure shell", Bus::System, Active::Active),
+            named("Avahi.service", "mDNS", Bus::User, Active::Failed),
+            named("cron.service", "Jobs", Bus::System, Active::Inactive),
+        ]
+    }
+
+    #[test]
+    fn every_column_orders_the_services() {
+        let units = units();
+        assert_eq!(
+            ordered(Column::Service, false, &units),
+            ["Avahi.service", "cron.service", "sshd.service"]
+        );
+        assert_eq!(
+            ordered(Column::Description, false, &units),
+            ["cron.service", "Avahi.service", "sshd.service"]
+        );
+        assert_eq!(
+            ordered(Column::Status, false, &units),
+            ["Avahi.service", "sshd.service", "cron.service"]
+        );
+        assert_eq!(
+            ordered(Column::Manager, false, &units),
+            ["sshd.service", "cron.service", "Avahi.service"]
+        );
+    }
+
+    #[test]
+    fn pressing_a_heading_orders_the_table_by_it() {
+        let mut services = Services {
+            list: Some(units()),
+            ..Services::default()
+        };
+        for message in pressed(services.view(), "Status") {
+            drop(services.update(message));
+        }
+        assert_eq!(services.sorting.direction(Column::Status), Some(false));
+    }
 
     fn service(active: Active, sub: &str) -> Service {
         Service {
