@@ -399,6 +399,25 @@ fn closing_the_last_window_with_a_recording_running_asks_first() {
 }
 
 #[test]
+fn another_process_can_answer_the_question_a_running_recording_raises() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    sent(&mut app, Command::Quit);
+    assert!(app.asking_to_quit);
+    sent(&mut app, Command::QuitSaving);
+    assert!(app.quitting && !app.asking_to_quit && !app.flight.is_recording());
+}
+
+#[test]
+fn another_process_can_discard_a_running_recording_and_end() {
+    let mut app = sampled();
+    update(&mut app, Message::Flight(flight::Message::Start));
+    let discard = Message::Ipc(ipc::Message::Received(Command::QuitDiscarding));
+    assert_eq!(app.update(discard).units(), 1);
+    assert!(!app.flight.is_recording());
+}
+
+#[test]
 fn what_other_processes_read_follows_the_application() {
     let mut app = sampled();
     update(&mut app, Message::Navigate(Page::Power));
@@ -433,6 +452,8 @@ fn the_command_line_names_what_it_asks_for() {
     assert_eq!(asks(&["--flight", "start"]), Ok(Command::StartRecording));
     assert_eq!(asks(&["--flight", "stop"]), Ok(Command::StopRecording));
     assert_eq!(asks(&["--quit"]), Ok(Command::Quit));
+    assert_eq!(asks(&["--quit", "save"]), Ok(Command::QuitSaving));
+    assert_eq!(asks(&["--quit", "discard"]), Ok(Command::QuitDiscarding));
     assert_eq!(
         asks(&["--page", "disk-space"]),
         Ok(Command::OpenPage("disk-space"))
@@ -454,6 +475,7 @@ fn a_command_line_that_asks_for_nothing_real_is_refused() {
     assert!(refused(&["--page"]).starts_with("Unknown option"));
     assert!(refused(&["--flight", "pause"]).starts_with("Unknown option"));
     assert!(refused(&["--quit", "now"]).starts_with("Unknown option"));
+    assert!(refused(&["--quit", "save", "discard"]).starts_with("Unknown option"));
     assert!(refused(&["--nonsense"]).starts_with("Unknown option"));
 }
 

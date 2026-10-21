@@ -74,7 +74,9 @@ Without an option this starts the application. With one it asks the running appl
   --resume              let the numbers move again
   --page NAME           show a page, opening the window if it is closed
   --flight start|stop   start or stop the flight recorder
-  --quit                end the application";
+  --quit                end the application, asking about a recording that is running
+  --quit save           end it, saving a recording that is running first
+  --quit discard        end it, dropping a recording that is running";
 
 /// The command a command line asks the running application for.
 fn parse(arguments: &[String]) -> Result<Command, String> {
@@ -92,6 +94,8 @@ fn parse(arguments: &[String]) -> Result<Command, String> {
         ["--flight", "start"] => Ok(Command::StartRecording),
         ["--flight", "stop"] => Ok(Command::StopRecording),
         ["--quit"] => Ok(Command::Quit),
+        ["--quit", "save"] => Ok(Command::QuitSaving),
+        ["--quit", "discard"] => Ok(Command::QuitDiscarding),
         ["--page", name] => Command::open_page(name)
             .ok_or_else(|| format!("No page called {name}. Pages: {}", PAGES.join(", "))),
         _ => Err(format!("Unknown option {}", arguments.join(" "))),
@@ -415,6 +419,8 @@ impl Peepers {
             Command::StartRecording => self.update(Message::Flight(flight::Message::Start)),
             Command::StopRecording => self.update(Message::Flight(flight::Message::Stop)),
             Command::Quit => self.quit(None),
+            Command::QuitSaving => self.quit(Some(Fate::Save)),
+            Command::QuitDiscarding => self.quit(Some(Fate::Discard)),
             Command::OpenPage(name) => match Page::from_slug(name) {
                 Some(page) => {
                     let window = self.windows.main.reveal();

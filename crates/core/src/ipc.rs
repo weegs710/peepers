@@ -49,7 +49,10 @@ pub enum Command {
     Resume,
     StartRecording,
     StopRecording,
+    /// Ends the application, asking in its window what to do with a recording that is running.
     Quit,
+    QuitSaving,
+    QuitDiscarding,
     /// Brings up one of [`PAGES`].
     OpenPage(&'static str),
 }
@@ -144,8 +147,26 @@ impl Control {
         self.send(Command::StopRecording)
     }
 
+    /// Refused while a recording runs, because the application then waits for an answer in its
+    /// window, and a caller that cannot see the window needs to hear that it did not end.
     fn quit(&self) -> fdo::Result<()> {
-        self.send(Command::Quit)
+        self.send(Command::Quit)?;
+        if self.state().recording {
+            return Err(fdo::Error::Failed(
+                "A recording is running, so peepers is asking in its window. \
+                 Quit again saying save or discard to answer it."
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn quit_saving(&self) -> fdo::Result<()> {
+        self.send(Command::QuitSaving)
+    }
+
+    fn quit_discarding(&self) -> fdo::Result<()> {
+        self.send(Command::QuitDiscarding)
     }
 
     fn open_page(&self, page: &str) -> fdo::Result<()> {
@@ -343,6 +364,8 @@ fn call(name: &str, command: Command) -> Result<(), String> {
         Command::StartRecording => ("StartRecording", None),
         Command::StopRecording => ("StopRecording", None),
         Command::Quit => ("Quit", None),
+        Command::QuitSaving => ("QuitSaving", None),
+        Command::QuitDiscarding => ("QuitDiscarding", None),
         Command::OpenPage(page) => ("OpenPage", Some(page)),
     };
     let bus = Connection::session().map_err(|error| reason(&error))?;
@@ -425,6 +448,8 @@ mod tests {
             Command::StartRecording,
             Command::StopRecording,
             Command::Quit,
+            Command::QuitSaving,
+            Command::QuitDiscarding,
             Command::OpenPage("flight"),
         ] {
             call(&name, command).unwrap();
@@ -452,6 +477,37 @@ mod tests {
         let commands = listener.commands();
         call(&name, Command::TogglePause).unwrap();
         assert_eq!(commands.recv(), Some(Command::TogglePause));
+    }
+
+    #[test]
+    #[ignore = "needs a session bus"]
+    fn quitting_is_refused_while_a_recording_runs_but_the_application_still_hears_it() {
+        let name = test_name("Quit");
+        let listener = Listener::claim(&name).unwrap();
+        let commands = listener.commands();
+        call(&name, Command::Quit).unwrap();
+        assert_eq!(commands.recv(), Some(Command::Quit));
+
+        listener.publish(State {
+            recording: true,
+            ..State::default()
+        });
+        let bus = Connection::session().unwrap();
+        let properties = proxy(&bus, &name, NAME);
+        for _ in 0..500 {
+            if properties.get_property::<bool>("Recording").unwrap() {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let error = call(&name, Command::Quit).unwrap_err();
+        assert!(error.contains("A recording is running"));
+        assert_eq!(commands.recv(), Some(Command::Quit));
+
+        call(&name, Command::QuitSaving).unwrap();
+        assert_eq!(commands.recv(), Some(Command::QuitSaving));
+        call(&name, Command::QuitDiscarding).unwrap();
+        assert_eq!(commands.recv(), Some(Command::QuitDiscarding));
     }
 
     #[test]
