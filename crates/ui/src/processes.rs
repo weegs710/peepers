@@ -16,7 +16,7 @@ use peepers_core::users::Users;
 
 use self::panel::{Panel, Priority};
 use self::rows::Row;
-use crate::widgets::scrolling;
+use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 use crate::{blocking, format, storage};
 
 /// Long enough for a thread that works in bursts to show up.
@@ -33,12 +33,14 @@ pub enum Sort {
     Threads,
 }
 
-impl Sort {
+impl Sortable for Sort {
     /// Numbers read best largest first, names smallest first.
     fn descending_first(self) -> bool {
         matches!(self, Self::Cpu | Self::Memory | Self::Threads)
     }
+}
 
+impl Sort {
     fn compare(self, a: &Process, b: &Process, users: &Users) -> Ordering {
         match self {
             Self::Cpu => a.cpu.total_cmp(&b.cpu),
@@ -77,8 +79,7 @@ pub enum Message {
 
 #[derive(Debug)]
 pub struct Processes {
-    sort: Sort,
-    descending: bool,
+    sorting: Sorting<Sort>,
     tree: bool,
     filter: String,
     command: String,
@@ -95,8 +96,7 @@ pub struct Processes {
 impl Default for Processes {
     fn default() -> Self {
         Self {
-            sort: Sort::default(),
-            descending: Sort::default().descending_first(),
+            sorting: Sorting::new(Sort::default()),
             tree: false,
             filter: String::new(),
             command: String::new(),
@@ -143,12 +143,7 @@ impl Processes {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Sort(sort) => {
-                self.descending = if sort == self.sort {
-                    !self.descending
-                } else {
-                    sort.descending_first()
-                };
-                self.sort = sort;
+                self.sorting.press(sort);
                 self.order();
             }
             Message::Filter(filter) => self.filter = filter,
@@ -270,16 +265,8 @@ impl Processes {
         };
         let count = rows.len();
 
-        let header = |label: &str, sort: Sort| {
-            let marker = match (sort == self.sort, self.descending) {
-                (false, _) => "",
-                (true, true) => " v",
-                (true, false) => " ^",
-            };
-            button(text(format!("{label}{marker}")))
-                .on_press(Message::Sort(sort))
-                .style(button::text)
-        };
+        let header =
+            |label, sort| sort_header(label, self.sorting.direction(sort), Message::Sort(sort));
         let selected = self.selected;
         let users = &self.users;
         let columns = [
@@ -371,15 +358,9 @@ impl Processes {
     }
 
     fn order(&mut self) {
-        let (sort, descending, users) = (self.sort, self.descending, &self.users);
-        self.list.sort_by(|a, b| {
-            let ordering = sort.compare(a, b, users);
-            if descending {
-                ordering.reverse()
-            } else {
-                ordering
-            }
-        });
+        let users = &self.users;
+        self.sorting
+            .sort(&mut self.list, |sort, a, b| sort.compare(a, b, users));
     }
 
     fn refresh_details(&mut self) {
@@ -463,4 +444,24 @@ fn user<'a>(users: &'a Users, process: &Process) -> Element<'a, Message> {
             .map_or_else(|| process.uid.to_string(), str::to_owned),
     )
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::pressed;
+
+    #[test]
+    fn pressing_a_heading_orders_the_table_by_it_and_again_turns_it_round() {
+        let mut processes = Processes::default();
+        assert_eq!(processes.sorting.direction(Sort::Cpu), Some(true));
+        for message in pressed(processes.view(), "Name") {
+            drop(processes.update(message));
+        }
+        assert_eq!(processes.sorting.direction(Sort::Name), Some(false));
+        for message in pressed(processes.view(), "Name") {
+            drop(processes.update(message));
+        }
+        assert_eq!(processes.sorting.direction(Sort::Name), Some(true));
+    }
 }

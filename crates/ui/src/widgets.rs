@@ -1,7 +1,12 @@
+use std::cmp::Ordering;
+
+use iced::widget::canvas::{self, Frame, Geometry, Path};
 use iced::widget::grid::Sizing;
 use iced::widget::text::Wrapping;
-use iced::widget::{Scrollable, column, container, grid, responsive, row, scrollable, space, text};
-use iced::{Element, Fill, Length};
+use iced::widget::{
+    Scrollable, button, column, container, grid, responsive, row, scrollable, space, text,
+};
+use iced::{Element, Fill, Length, Point, Rectangle, Renderer, Theme, mouse};
 
 use peepers_core::telemetry::Vitals;
 
@@ -125,9 +130,191 @@ pub fn detail<'a, Message: 'a>(
     .into()
 }
 
+/// A column a table can be ordered by.
+pub trait Sortable: Copy + PartialEq {
+    /// Whether a first press on the column puts the largest first. Numbers read best that way and
+    /// names the other way round.
+    fn descending_first(self) -> bool;
+}
+
+/// The column a table is ordered by and which way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sorting<C> {
+    column: C,
+    descending: bool,
+}
+
+impl<C: Sortable + Default> Default for Sorting<C> {
+    fn default() -> Self {
+        Self::new(C::default())
+    }
+}
+
+impl<C: Sortable> Sorting<C> {
+    pub fn new(column: C) -> Self {
+        Self {
+            column,
+            descending: column.descending_first(),
+        }
+    }
+
+    /// Pressing the column in use turns the order round, and pressing another starts it in its own
+    /// first direction.
+    pub fn press(&mut self, column: C) {
+        if self.column == column {
+            self.descending = !self.descending;
+        } else {
+            *self = Self::new(column);
+        }
+    }
+
+    /// Which way `column` is ordered, or `None` when the table is ordered by another.
+    pub fn direction(self, column: C) -> Option<bool> {
+        (self.column == column).then_some(self.descending)
+    }
+
+    /// Puts `rows` in order, with `compare` giving the ascending order of two rows by a column. Rows
+    /// that compare equal keep the order they had.
+    pub fn sort<T>(self, rows: &mut [T], compare: impl Fn(C, &T, &T) -> Ordering) {
+        rows.sort_by(|a, b| {
+            let order = compare(self.column, a, b);
+            if self.descending {
+                order.reverse()
+            } else {
+                order
+            }
+        });
+    }
+}
+
+/// The side of the square an arrow is drawn in.
+const ARROW: f32 = 12.0;
+
+/// A small triangle pointing down for a descending order and up for an ascending one.
+struct Arrow {
+    descending: bool,
+}
+
+impl<Message> canvas::Program<Message> for Arrow {
+    type State = ();
+
+    fn draw(
+        &self,
+        (): &(),
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let (width, height) = (frame.width(), frame.height());
+        let (base, tip) = if self.descending {
+            (height * 0.3, height * 0.75)
+        } else {
+            (height * 0.7, height * 0.25)
+        };
+        let triangle = Path::new(|path| {
+            path.move_to(Point::new(width * 0.15, base));
+            path.line_to(Point::new(width * 0.85, base));
+            path.line_to(Point::new(width * 0.5, tip));
+            path.close();
+        });
+        frame.fill(&triangle, theme.palette().text);
+        vec![frame.into_geometry()]
+    }
+}
+
+/// A column heading that orders its table when pressed. It carries an arrow while its column is the
+/// one in use, and keeps the room for one when it is not, so the headings do not shift.
+pub fn sort_header<'a, Message: Clone + 'a>(
+    label: &'a str,
+    direction: Option<bool>,
+    press: Message,
+) -> Element<'a, Message> {
+    let arrow: Element<'a, Message> = match direction {
+        Some(descending) => canvas::Canvas::new(Arrow { descending })
+            .width(ARROW)
+            .height(ARROW)
+            .into(),
+        None => space().width(ARROW).height(ARROW).into(),
+    };
+    button(row![text(label), arrow].spacing(6).align_y(iced::Center))
+        .on_press(press)
+        .style(button::text)
+        .into()
+}
+
+/// What pressing the control labelled `target` in `view` sends, found by drawing the view as a
+/// window would and clicking where the label is.
+#[cfg(test)]
+pub fn pressed<'a, Message: 'a>(
+    view: impl Into<Element<'a, Message>>,
+    target: &str,
+) -> Vec<Message> {
+    let mut simulator = iced_test::Simulator::with_size(
+        iced::Settings::default(),
+        iced::Size::new(1280.0, 800.0),
+        view,
+    );
+    simulator.click(target).unwrap();
+    simulator.into_messages().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Column {
+        Name,
+        Size,
+    }
+
+    impl Sortable for Column {
+        fn descending_first(self) -> bool {
+            self == Self::Size
+        }
+    }
+
+    fn by_column(column: Column, a: &(&str, u32), b: &(&str, u32)) -> Ordering {
+        match column {
+            Column::Name => a.0.cmp(b.0),
+            Column::Size => a.1.cmp(&b.1),
+        }
+    }
+
+    #[test]
+    fn a_column_starts_in_its_own_direction_and_turns_round_when_pressed_again() {
+        let mut sorting = Sorting::new(Column::Name);
+        assert_eq!(sorting.direction(Column::Name), Some(false));
+        assert_eq!(sorting.direction(Column::Size), None);
+        sorting.press(Column::Size);
+        assert_eq!(sorting.direction(Column::Size), Some(true));
+        sorting.press(Column::Size);
+        assert_eq!(sorting.direction(Column::Size), Some(false));
+        sorting.press(Column::Name);
+        assert_eq!(sorting.direction(Column::Name), Some(false));
+    }
+
+    #[test]
+    fn rows_are_put_in_the_order_the_column_and_direction_say() {
+        let mut rows = [("b", 1), ("c", 3), ("a", 2)];
+        Sorting::new(Column::Name).sort(&mut rows, by_column);
+        assert_eq!(rows, [("a", 2), ("b", 1), ("c", 3)]);
+        Sorting::new(Column::Size).sort(&mut rows, by_column);
+        assert_eq!(rows, [("c", 3), ("a", 2), ("b", 1)]);
+        let mut backwards = Sorting::new(Column::Name);
+        backwards.press(Column::Name);
+        backwards.sort(&mut rows, by_column);
+        assert_eq!(rows, [("c", 3), ("b", 1), ("a", 2)]);
+    }
+
+    #[test]
+    fn rows_that_tie_keep_the_order_they_had() {
+        let mut rows = [("x", 1), ("a", 1), ("m", 1)];
+        Sorting::new(Column::Size).sort(&mut rows, by_column);
+        assert_eq!(rows, [("x", 1), ("a", 1), ("m", 1)]);
+    }
 
     #[test]
     fn as_many_cells_as_hold_the_least_width_share_a_row() {
