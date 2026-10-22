@@ -1,5 +1,6 @@
-use iced::widget::{column, container, row, scrollable, space, text};
+use iced::widget::{column, container, row, rule, scrollable, space, text};
 use iced::{Element, Fill};
+use peepers_core::gpu::Adapter;
 use peepers_core::sensors::{Chip, Kind, Reading};
 use peepers_core::telemetry::Vitals;
 
@@ -13,25 +14,119 @@ use crate::widgets::flow;
 const CLOCK_WIDTH: f32 = 110.0;
 const CLOCK_SPACING: f32 = 12.0;
 
+/// The part of the machine a chip measures, in the order the Performance page lists its devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Group {
+    Processor,
+    Memory,
+    Storage,
+    Network,
+    Graphics,
+    Other,
+}
+
+impl Group {
+    const ALL: [Self; 6] = [
+        Self::Processor,
+        Self::Memory,
+        Self::Storage,
+        Self::Network,
+        Self::Graphics,
+        Self::Other,
+    ];
+
+    fn of(chip: &Chip) -> Self {
+        match chip.name.as_str() {
+            "k10temp" | "coretemp" | "zenpower" => Self::Processor,
+            "spd5118" | "jc42" => Self::Memory,
+            "nvme" | "drivetemp" => Self::Storage,
+            "amdgpu" | "radeon" | "nouveau" | "i915" | "xe" | "nvidia" => Self::Graphics,
+            _ if chip.model.as_deref().is_some_and(is_network) => Self::Network,
+            _ => Self::Other,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Processor => "Processor",
+            Self::Memory => "Memory",
+            Self::Storage => "Storage",
+            Self::Network => "Network",
+            Self::Graphics => "Graphics",
+            Self::Other => "Other sensors",
+        }
+    }
+}
+
+/// A network chip is told by its PCI name, because hwmon names the driver and drivers vary too much to list.
+fn is_network(model: &str) -> bool {
+    let model = model.to_lowercase();
+    ["wireless", "ethernet", "network"]
+        .iter()
+        .any(|word| model.contains(word))
+}
+
 pub fn view<'a, Message: 'a>(history: &'a History, unit: Temperature) -> Element<'a, Message> {
     let Some(latest) = history.latest() else {
         return container(text("Waiting for the first sample").style(text::secondary))
             .center(Fill)
             .into();
     };
-    let sections = std::iter::once(processor(history, latest))
-        .chain(std::iter::once(domains(latest)))
-        .chain(
+    let groups = Group::ALL.into_iter().filter_map(|group| {
+        let mut parts: Vec<Element<'a, Message>> = Vec::new();
+        if group == Group::Processor {
+            parts.push(processor(history, latest));
+            parts.push(domains(latest));
+        }
+        parts.extend(
             latest
                 .chips
                 .iter()
-                .filter(|chip| !chip.readings.is_empty())
+                .filter(|chip| !chip.readings.is_empty() && Group::of(chip) == group)
                 .map(|chip| section(history, chip, unit)),
         );
-    scrollable(column(sections).spacing(24).padding(16))
+        if group == Group::Graphics {
+            parts.extend(
+                latest
+                    .adapters
+                    .iter()
+                    .filter(|adapter| adapter.sensors.is_empty())
+                    .map(silent),
+            );
+        }
+        (!parts.is_empty()).then(|| header(group, parts))
+    });
+    scrollable(column(groups).spacing(32).padding(16))
         .width(Fill)
         .height(Fill)
         .into()
+}
+
+/// A group's name, set apart so it can be found in a long page, over what it holds.
+fn header<'a, Message: 'a>(group: Group, parts: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    column![
+        text(group.title()).size(28).style(text::primary),
+        rule::horizontal(2),
+        column(parts)
+            .spacing(24)
+            .padding(iced::Padding::ZERO.top(8)),
+    ]
+    .spacing(6)
+    .into()
+}
+
+/// A graphics card whose driver offers no sensors, so its absence is not taken for a gap.
+fn silent<'a, Message: 'a>(adapter: &Adapter) -> Element<'a, Message> {
+    let name = adapter
+        .model
+        .clone()
+        .unwrap_or_else(|| adapter.card.clone());
+    column![
+        text(name).size(20),
+        text("Its driver reports no sensors").style(text::secondary),
+    ]
+    .spacing(4)
+    .into()
 }
 
 fn processor<'a, Message: 'a>(history: &History, latest: &'a Vitals) -> Element<'a, Message> {
@@ -146,7 +241,7 @@ fn section<'a, Message: 'a>(
 /// the name of a bridge on the chipset, so those drivers get a plain role instead.
 fn title(chip: &Chip) -> String {
     match chip.name.as_str() {
-        "k10temp" | "coretemp" | "zenpower" => "Processor".to_owned(),
+        "k10temp" | "coretemp" | "zenpower" => "Temperatures".to_owned(),
         "spd5118" | "jc42" => "Memory module".to_owned(),
         "acpitz" => "Firmware thermal zone".to_owned(),
         _ => chip.model.clone().unwrap_or_else(|| chip.name.clone()),
@@ -212,5 +307,53 @@ fn floor(kind: Kind) -> f32 {
         Kind::Power => 10.0,
         Kind::Frequency | Kind::Fan => 1000.0,
         Kind::Voltage | Kind::Current => 1.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chip(name: &str, model: Option<&str>) -> Chip {
+        Chip {
+            id: "hwmon0".to_owned(),
+            name: name.to_owned(),
+            model: model.map(str::to_owned),
+            readings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_chip_is_grouped_by_what_it_measures() {
+        assert_eq!(Group::of(&chip("k10temp", None)), Group::Processor);
+        assert_eq!(Group::of(&chip("spd5118", None)), Group::Memory);
+        assert_eq!(Group::of(&chip("nvme", None)), Group::Storage);
+        assert_eq!(Group::of(&chip("amdgpu", None)), Group::Graphics);
+        assert_eq!(Group::of(&chip("acpitz", None)), Group::Other);
+    }
+
+    #[test]
+    fn a_network_chip_is_told_by_its_pci_name() {
+        let wifi = chip(
+            "mt7921_phy0",
+            Some("MT7921 802.11ax PCIe Wireless Network Adapter [Filogic 330]"),
+        );
+        assert_eq!(Group::of(&wifi), Group::Network);
+        assert_eq!(Group::of(&chip("mt7921_phy0", None)), Group::Other);
+    }
+
+    #[test]
+    fn the_groups_follow_the_order_of_the_performance_page() {
+        assert_eq!(
+            Group::ALL.map(Group::title),
+            [
+                "Processor",
+                "Memory",
+                "Storage",
+                "Network",
+                "Graphics",
+                "Other sensors"
+            ]
+        );
     }
 }
