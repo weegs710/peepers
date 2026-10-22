@@ -115,7 +115,7 @@ fn header<'a, Message: 'a>(group: Group, parts: Vec<Element<'a, Message>>) -> El
     .into()
 }
 
-/// A graphics card whose driver offers no sensors, so its absence is not taken for a gap.
+/// A graphics card with no readings, so its absence is not taken for a gap.
 fn silent<'a, Message: 'a>(adapter: &Adapter) -> Element<'a, Message> {
     let name = adapter
         .model
@@ -123,7 +123,7 @@ fn silent<'a, Message: 'a>(adapter: &Adapter) -> Element<'a, Message> {
         .unwrap_or_else(|| adapter.card.clone());
     column![
         text(name).size(20),
-        text("Its driver reports no sensors").style(text::secondary),
+        text("No sensor readings are available for it").style(text::secondary),
     ]
     .spacing(4)
     .into()
@@ -328,7 +328,9 @@ mod tests {
         assert_eq!(Group::of(&chip("k10temp", None)), Group::Processor);
         assert_eq!(Group::of(&chip("spd5118", None)), Group::Memory);
         assert_eq!(Group::of(&chip("nvme", None)), Group::Storage);
-        assert_eq!(Group::of(&chip("amdgpu", None)), Group::Graphics);
+        for driver in ["amdgpu", "radeon", "nouveau", "i915", "xe", "nvidia"] {
+            assert_eq!(Group::of(&chip(driver, None)), Group::Graphics);
+        }
         assert_eq!(Group::of(&chip("acpitz", None)), Group::Other);
     }
 
