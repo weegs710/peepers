@@ -11,6 +11,7 @@ mod graph;
 mod history;
 mod info;
 mod ipc;
+mod notice;
 mod performance;
 mod power;
 mod pressure;
@@ -35,6 +36,7 @@ use std::iter;
 use std::process;
 use std::sync::Arc;
 
+use iced::time;
 use iced::widget::{button, column, container, row, rule, scrollable, text};
 use iced::{Element, Fill, Subscription, Task, Theme};
 use peepers_core::ipc::{Command, PAGES};
@@ -309,6 +311,8 @@ enum Message {
     Tray(tray::Message),
     Ipc(ipc::Message),
     Window(window::Event),
+    /// Draws the page again so a success notice leaves on time.
+    Tick,
     TogglePause,
     TogglePopout,
     /// End the application, with `None` asking what to do if a recording is running.
@@ -495,6 +499,7 @@ impl Peepers {
             Message::Startup(message) => return self.startup.update(message).map(Message::Startup),
             Message::Users(message) => return self.users.update(message).map(Message::Users),
             Message::Info(message) => return self.info.update(message).map(Message::Info),
+            Message::Tick => {}
             Message::Settings(message) => {
                 let saved = self.preferences.update(message).map(Message::Settings);
                 return Task::batch([saved, self.sync_tray()]);
@@ -569,8 +574,22 @@ impl Peepers {
             | Page::Info
             | Page::Settings => Subscription::none(),
         };
+        let fading = match self.page {
+            Page::Processes | Page::Pressure => self.processes.fading(),
+            Page::Services => self.services.fading(),
+            Page::Users => self.users.fading(),
+            Page::Flight => self.flight.fading(),
+            Page::Info => self.info.fading(),
+            _ => false,
+        };
+        let fade = if fading {
+            time::every(notice::REFRESH).map(|_| Message::Tick)
+        } else {
+            Subscription::none()
+        };
         let interval = self.preferences.settings.interval.duration();
         Subscription::batch([
+            fade,
             telemetry::subscription(interval),
             window::events().map(Message::Window),
             settings::keys().map(Message::Settings),

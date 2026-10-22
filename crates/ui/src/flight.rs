@@ -12,6 +12,7 @@ use peepers_core::trace::{Frame, Recorder, Trace};
 use crate::blocking;
 use crate::format;
 use crate::graph::{Graph, LABELLED_HEIGHT, Scale, Tone, as_percent, as_rate, decimate, level};
+use crate::notice::{self, Notice};
 use crate::storage;
 use crate::widgets::{flow, scrolling};
 
@@ -64,6 +65,7 @@ pub enum Message {
     Open(PathBuf),
     Loaded(Result<Box<Trace>, String>),
     Close,
+    Dismiss,
     Play,
     Seek(u32),
     Speed(Speed),
@@ -143,7 +145,7 @@ pub struct Flight {
     directory: String,
     /// The user's name for the recording that is running, which goes into its file name.
     label: String,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
     files: Vec<PathBuf>,
     doomed: Option<Doomed>,
     replay: Option<Replay>,
@@ -178,6 +180,10 @@ impl Flight {
         }
     }
 
+    pub fn fading(&self) -> bool {
+        notice::fading(self.notice.as_ref())
+    }
+
     pub fn is_recording(&self) -> bool {
         self.recorder.is_some()
     }
@@ -206,13 +212,10 @@ impl Flight {
             && !recorder.record(vitals)
         {
             self.full = true;
-            self.notice = Some((
-                format!(
-                    "The recording is full after {}. Stop it to save what was captured.",
-                    format::uptime(recorder.elapsed())
-                ),
-                true,
-            ));
+            self.notice = Some(Notice::failure(format!(
+                "The recording is full after {}. Stop it to save what was captured.",
+                format::uptime(recorder.elapsed())
+            )));
         }
     }
 
@@ -243,8 +246,10 @@ impl Flight {
             }
             Message::Saved(result) => {
                 self.notice = Some(match result {
-                    Ok(path) => (format!("Saved {}", path.display()), false),
-                    Err(error) => (format!("The recording could not be saved: {error}"), true),
+                    Ok(path) => Notice::success(format!("Saved {}", path.display())),
+                    Err(error) => {
+                        Notice::failure(format!("The recording could not be saved: {error}"))
+                    }
                 });
                 return self.enter();
             }
@@ -261,9 +266,9 @@ impl Flight {
             }
             Message::Deleted(result) => {
                 self.notice = Some(match result {
-                    Ok(1) => ("Deleted 1 recording".to_owned(), false),
-                    Ok(count) => (format!("Deleted {count} recordings"), false),
-                    Err(error) => (error, true),
+                    Ok(1) => Notice::success("Deleted 1 recording"),
+                    Ok(count) => Notice::success(format!("Deleted {count} recordings")),
+                    Err(error) => Notice::failure(error),
                 });
                 return self.enter();
             }
@@ -292,9 +297,10 @@ impl Flight {
                     });
                     self.notice = None;
                 }
-                Err(error) => self.notice = Some((error, true)),
+                Err(error) => self.notice = Some(Notice::failure(error)),
             },
             Message::Close => self.replay = None,
+            Message::Dismiss => self.notice = None,
             Message::Play
             | Message::Seek(_)
             | Message::Speed(_)
@@ -345,9 +351,8 @@ impl Flight {
         ]
         .spacing(16)
         .align_y(iced::Center);
-        let notice = self.notice.as_ref().map(|(message, failed)| {
-            Element::from(text(message).style(if *failed { text::danger } else { text::success }))
-        });
+        let notice =
+            notice::shown(self.notice.as_ref()).map(|notice| notice.view(Message::Dismiss));
         column![header]
             .extend(notice)
             .push(match &self.replay {
@@ -745,6 +750,23 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(flight.listed(&Doomed::All).len(), 2);
+    }
+
+    #[test]
+    fn a_success_leaves_the_page_by_itself_and_a_failure_stays() {
+        let mut flight = Flight::default();
+        drop(flight.update(Message::Deleted(Ok(1)), None));
+        assert!(flight.fading());
+        assert!(notice::shown(flight.notice.as_ref()).is_some());
+        flight.notice = flight.notice.take().map(Notice::aged);
+        assert!(!flight.fading());
+        assert!(notice::shown(flight.notice.as_ref()).is_none());
+
+        drop(flight.update(Message::Deleted(Err("Nope".to_owned())), None));
+        flight.notice = flight.notice.take().map(Notice::aged);
+        assert!(notice::shown(flight.notice.as_ref()).is_some());
+        drop(flight.update(Message::Dismiss, None));
+        assert!(flight.notice.is_none());
     }
 
     #[test]

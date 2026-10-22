@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
 use iced::{Element, Fill, Right, Task};
 use peepers_core::process::{self, Details, Observation, Process, Signal};
 use peepers_core::telemetry::Sample;
@@ -16,6 +16,7 @@ use peepers_core::users::Users;
 
 use self::panel::{Panel, Priority};
 use self::rows::Row;
+use crate::notice::{self, Notice};
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 use crate::{blocking, format, storage};
 
@@ -51,12 +52,6 @@ impl Sort {
             Self::Threads => a.threads.cmp(&b.threads),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Notice {
-    text: String,
-    failed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +111,10 @@ impl Processes {
     /// Every process in the latest sample, in the order the table shows them.
     pub fn all(&self) -> &[Process] {
         &self.list
+    }
+
+    pub fn fading(&self) -> bool {
+        notice::fading(self.notice.as_ref())
     }
 
     /// The process the panel below the table describes.
@@ -211,9 +210,7 @@ impl Processes {
             Message::Run => return self.run(),
             Message::Sample => return self.sample(),
             Message::Finished(result) => {
-                let (text, failed) =
-                    result.map_or_else(|error| (error, true), |text| (text, false));
-                self.notice = Some(Notice { text, failed });
+                self.notice = Some(result.map_or_else(Notice::failure, Notice::success));
                 return Task::none();
             }
             Message::Dismiss => self.notice = None,
@@ -239,10 +236,10 @@ impl Processes {
         let Some(pid) = self.selected else {
             return Task::none();
         };
-        self.notice = Some(Notice {
-            text: format!("Sampling {pid} for {} seconds", SAMPLE_WINDOW.as_secs()),
-            failed: false,
-        });
+        self.notice = Some(Notice::success(format!(
+            "Sampling {pid} for {} seconds",
+            SAMPLE_WINDOW.as_secs()
+        )));
         blocking::run(move || {
             let observation =
                 Observation::capture(pid, SAMPLE_WINDOW).map_err(|error| error.to_string())?;
@@ -313,7 +310,11 @@ impl Processes {
         .align_y(iced::Center);
 
         column![toolbar]
-            .extend(self.notice.as_ref().map(notice))
+            .extend(notice::shown(self.notice.as_ref()).map(|notice| {
+                container(notice.view(Message::Dismiss))
+                    .padding([0, 8])
+                    .into()
+            }))
             .push(
                 scrolling(table(columns, rows).padding_x(10).padding_y(2))
                     .width(Fill)
@@ -371,10 +372,7 @@ impl Processes {
             Some(pid) => {
                 self.selected = None;
                 self.details = Details::default();
-                self.notice = Some(Notice {
-                    text: format!("Process {pid} has exited"),
-                    failed: false,
-                });
+                self.notice = Some(Notice::success(format!("Process {pid} has exited")));
             }
             None => {}
         }
@@ -382,33 +380,10 @@ impl Processes {
 
     fn report(&mut self, result: io::Result<()>, success: &str) {
         self.notice = Some(match result {
-            Ok(()) => Notice {
-                text: success.to_owned(),
-                failed: false,
-            },
-            Err(error) => Notice {
-                text: error.to_string(),
-                failed: true,
-            },
+            Ok(()) => Notice::success(success),
+            Err(error) => Notice::failure(error.to_string()),
         });
     }
-}
-
-fn notice(notice: &Notice) -> Element<'_, Message> {
-    row![
-        text(&notice.text).style(if notice.failed {
-            text::danger
-        } else {
-            text::success
-        }),
-        button("Dismiss")
-            .on_press(Message::Dismiss)
-            .style(button::text),
-    ]
-    .spacing(8)
-    .padding([0, 8])
-    .align_y(iced::Center)
-    .into()
 }
 
 fn name(row: Row<'_>, selected: Option<u32>) -> Element<'_, Message> {

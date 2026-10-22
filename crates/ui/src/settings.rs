@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Page;
 use crate::blocking;
+use crate::notice::Notice;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Temperature {
@@ -246,6 +247,7 @@ pub enum Message {
     TextSizeChosen,
     Zoom(Zoom),
     Saved(Result<(), String>),
+    Dismiss,
 }
 
 /// The settings and what to tell the user about saving them.
@@ -254,7 +256,7 @@ pub struct Preferences {
     pub settings: Settings,
     /// The text size under the pointer while the slider is held.
     dragging: Option<u8>,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
 }
 
 impl Preferences {
@@ -269,12 +271,9 @@ impl Preferences {
             Err(error) => Self {
                 settings: Settings::default(),
                 dragging: None,
-                notice: Some((
-                    format!(
-                        "The settings file could not be read, so the defaults are in use: {error}"
-                    ),
-                    true,
-                )),
+                notice: Some(Notice::failure(format!(
+                    "The settings file could not be read, so the defaults are in use: {error}"
+                ))),
             },
         }
     }
@@ -297,9 +296,13 @@ impl Preferences {
             }
             Message::Zoom(zoom) => self.settings.text_size = self.settings.zoomed(zoom),
             Message::Saved(result) => {
-                self.notice = result
-                    .err()
-                    .map(|error| (format!("The settings could not be saved: {error}"), true));
+                self.notice = result.err().map(|error| {
+                    Notice::failure(format!("The settings could not be saved: {error}"))
+                });
+                return Task::none();
+            }
+            Message::Dismiss => {
+                self.notice = None;
                 return Task::none();
             }
         }
@@ -368,11 +371,11 @@ impl Preferences {
                 .style(text::secondary),
         ]
         .extend(tray_error.map(|error| text(error).style(text::danger).into()))
-        .extend(self.notice.as_ref().map(|(message, failed)| {
-            text(message)
-                .style(if *failed { text::danger } else { text::success })
-                .into()
-        }))
+        .extend(
+            self.notice
+                .as_ref()
+                .map(|notice| notice.view(Message::Dismiss)),
+        )
         .spacing(16)
         .padding(16)
         .into()

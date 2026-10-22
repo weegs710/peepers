@@ -8,6 +8,7 @@ use iced::{Element, Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
 
 use crate::blocking;
+use crate::notice::{self, Notice};
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
@@ -51,6 +52,7 @@ pub enum Message {
     Select(String, Bus),
     Control(Action),
     Done(Result<(), String>),
+    Dismiss,
 }
 
 #[derive(Debug, Default)]
@@ -60,7 +62,7 @@ pub struct Services {
     filter: String,
     running_only: bool,
     selected: Option<(String, Bus)>,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
 }
 
 impl Services {
@@ -72,15 +74,18 @@ impl Services {
         time::every(REFRESH).map(|_| Message::Refresh)
     }
 
+    pub fn fading(&self) -> bool {
+        notice::fading(self.notice.as_ref())
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Refresh => return Self::enter(),
             Message::Loaded(Ok(list)) => self.list = Some(list),
             Message::Loaded(Err(error)) => {
-                self.notice = Some((
-                    format!("The service manager could not be read: {error}"),
-                    true,
-                ));
+                self.notice = Some(Notice::failure(format!(
+                    "The service manager could not be read: {error}"
+                )));
             }
             Message::Sort(column) => self.sorting.press(column),
             Message::Filter(filter) => self.filter = filter,
@@ -97,22 +102,26 @@ impl Services {
             }
             Message::Done(result) => {
                 self.notice = Some(match result {
-                    Ok(()) => ("Requested".to_owned(), false),
-                    Err(error) => (error, true),
+                    Ok(()) => Notice::success("Requested"),
+                    Err(error) => Notice::failure(error),
                 });
                 return Self::enter();
             }
+            Message::Dismiss => self.notice = None,
         }
         Task::none()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let Some(list) = &self.list else {
-            return match &self.notice {
-                Some((error, _)) => text(error).style(text::danger),
-                None => text("Asking the service manager").style(text::secondary),
-            }
-            .into();
+            return notice::shown(self.notice.as_ref()).map_or_else(
+                || {
+                    text("Asking the service manager")
+                        .style(text::secondary)
+                        .into()
+                },
+                |notice| notice.view(Message::Dismiss),
+            );
         };
         let needle = self.filter.to_lowercase();
         let mut rows: Vec<&Service> = list
@@ -214,18 +223,8 @@ impl Services {
                     action("Start", Action::Start),
                     action("Stop", Action::Stop),
                     action("Restart", Action::Restart),
-                    text(
-                        self.notice
-                            .as_ref()
-                            .map_or("", |(message, _)| message.as_str())
-                    )
-                    .style(
-                        if self.notice.as_ref().is_some_and(|(_, failed)| *failed) {
-                            text::danger
-                        } else {
-                            text::success
-                        }
-                    ),
+                    notice::shown(self.notice.as_ref())
+                        .map_or_else(|| text("").into(), |notice| notice.view(Message::Dismiss)),
                 ]
                 .spacing(12)
                 .align_y(iced::Center),

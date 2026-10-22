@@ -10,6 +10,7 @@ use peepers_core::sessions::{self, Action, Session};
 
 use crate::blocking;
 use crate::format;
+use crate::notice::{self, Notice};
 use crate::processes::Processes;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
@@ -52,6 +53,7 @@ pub enum Message {
     Select(u32),
     Control(Action),
     Done(Result<(), String>),
+    Dismiss,
 }
 
 #[derive(Debug, Default)]
@@ -59,7 +61,7 @@ pub struct Users {
     sessions: Vec<Session>,
     sorting: Sorting<Column>,
     selected: Option<u32>,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
 }
 
 /// One line of the users table.
@@ -88,16 +90,19 @@ impl Users {
         time::every(REFRESH).map(|_| Message::Refresh)
     }
 
+    pub fn fading(&self) -> bool {
+        notice::fading(self.notice.as_ref())
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Sort(column) => self.sorting.press(column),
             Message::Refresh => return Self::enter(),
             Message::Loaded(Ok(sessions)) => self.sessions = sessions,
             Message::Loaded(Err(error)) => {
-                self.notice = Some((
-                    format!("The login manager could not be read: {error}"),
-                    true,
-                ));
+                self.notice = Some(Notice::failure(format!(
+                    "The login manager could not be read: {error}"
+                )));
             }
             Message::Select(uid) => {
                 self.selected = Some(uid);
@@ -117,11 +122,12 @@ impl Users {
             }
             Message::Done(result) => {
                 self.notice = Some(match result {
-                    Ok(()) => ("Requested".to_owned(), false),
-                    Err(error) => (error, true),
+                    Ok(()) => Notice::success("Requested"),
+                    Err(error) => Notice::failure(error),
                 });
                 return Self::enter();
             }
+            Message::Dismiss => self.notice = None,
         }
         Task::none()
     }
@@ -181,18 +187,9 @@ impl Users {
         let actions = selected.map(|uid| {
             row![
                 text(format!("{}", processes.user_name(uid))).size(20),
-                space::horizontal(),
-                text(
-                    self.notice
-                        .as_ref()
-                        .map_or("", |(message, _)| message.as_str())
-                )
-                .style(
-                    if self.notice.as_ref().is_some_and(|(_, failed)| *failed) {
-                        text::danger
-                    } else {
-                        text::success
-                    }
+                notice::shown(self.notice.as_ref()).map_or_else(
+                    || space::horizontal().into(),
+                    |notice| notice.view(Message::Dismiss)
                 ),
                 button("Lock")
                     .on_press_maybe((sessions(uid) > 0).then_some(Message::Control(Action::Lock)))

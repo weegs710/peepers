@@ -7,6 +7,7 @@ use peepers_core::report::Report;
 use peepers_core::telemetry::Vitals;
 use peepers_core::volumes;
 
+use crate::notice::{self, Notice};
 use crate::{blocking, storage};
 
 #[derive(Debug, Clone)]
@@ -15,13 +16,14 @@ pub enum Message {
     Directory(String),
     Export,
     Exported(Result<PathBuf, String>),
+    Dismiss,
 }
 
 #[derive(Debug)]
 pub struct Info {
     report: Option<Report>,
     directory: String,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
 }
 
 impl Default for Info {
@@ -45,6 +47,10 @@ impl Info {
         })
     }
 
+    pub fn fading(&self) -> bool {
+        notice::fading(self.notice.as_ref())
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Built(report) => self.report = Some(*report),
@@ -60,10 +66,13 @@ impl Info {
             }
             Message::Exported(result) => {
                 self.notice = Some(match result {
-                    Ok(path) => (format!("Saved {}", path.display()), false),
-                    Err(error) => (format!("The report could not be saved: {error}"), true),
+                    Ok(path) => Notice::success(format!("Saved {}", path.display())),
+                    Err(error) => {
+                        Notice::failure(format!("The report could not be saved: {error}"))
+                    }
                 });
             }
+            Message::Dismiss => self.notice = None,
         }
         Task::none()
     }
@@ -84,9 +93,8 @@ impl Info {
                 .spacing(8)
                 .into()
         });
-        let notice = self.notice.as_ref().map(|(message, failed)| {
-            Element::from(text(message).style(if *failed { text::danger } else { text::success }))
-        });
+        let notice =
+            notice::shown(self.notice.as_ref()).map(|notice| notice.view(Message::Dismiss));
         column![
             row![
                 text("System information").size(24),

@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 
-use iced::widget::{button, column, row, space, table, text};
+use iced::widget::{button, column, container, row, space, table, text};
 use iced::{Element, Fill, Task};
 use peepers_core::startup::{self, Scope, Startup};
 
 use crate::blocking;
 use crate::format;
+use crate::notice::Notice;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -40,13 +41,14 @@ pub enum Message {
     Sort(Column),
     Toggle(Startup),
     Toggled(Result<(), String>),
+    Dismiss,
 }
 
 #[derive(Debug, Default)]
 pub struct StartupApps {
     entries: Option<Vec<Startup>>,
     sorting: Sorting<Column>,
-    failure: Option<String>,
+    failure: Option<Notice>,
 }
 
 impl StartupApps {
@@ -65,9 +67,12 @@ impl StartupApps {
                 .map(Message::Toggled);
             }
             Message::Toggled(result) => {
-                self.failure = result.err();
+                self.failure = result
+                    .err()
+                    .map(|error| Notice::failure(format!("Could not change the entry: {error}")));
                 return Self::enter();
             }
+            Message::Dismiss => self.failure = None,
         }
         Task::none()
     }
@@ -117,11 +122,11 @@ impl StartupApps {
                 .width(Fill)
                 .height(Fill),
         ]
-        .extend(self.failure.as_ref().map(|failure| {
-            text(format!("Could not change the entry: {failure}"))
-                .style(text::danger)
-                .into()
-        }))
+        .extend(
+            self.failure
+                .as_ref()
+                .map(|failure| container(failure.view(Message::Dismiss)).padding(8).into()),
+        )
         .into()
     }
 }

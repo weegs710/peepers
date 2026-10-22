@@ -584,6 +584,105 @@ fn a_failed_load_says_why() {
     assert!(ui(&app).find("The recording is not valid data.").is_ok());
 }
 
+/// The error the system manager gave for a service that needs a password, which is long enough to
+/// fill any line it is shown on.
+const LONG_ERROR: &str = "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired: Access denied as the requested operation requires interactive authentication. However, interactive authentication has not been enabled by the calling program.";
+
+/// Puts a failure with this message on a page that keeps one on screen.
+fn fail(app: &mut Peepers, page: Page, message: &str) {
+    let long = || message.to_owned();
+    match page {
+        Page::Processes => update(
+            app,
+            Message::Processes(processes::Message::Finished(Err(long()))),
+        ),
+        Page::Services => {
+            let service = peepers_core::systemd::Service {
+                name: "apparmor.service".to_owned(),
+                description: "apparmor.service".to_owned(),
+                bus: peepers_core::systemd::Bus::System,
+                load: "not-found".to_owned(),
+                active: peepers_core::systemd::Active::Inactive,
+                sub: "dead".to_owned(),
+            };
+            update(
+                app,
+                Message::Services(services::Message::Loaded(Ok(vec![service.clone()]))),
+            );
+            update(
+                app,
+                Message::Services(services::Message::Select(service.name, service.bus)),
+            );
+            update(app, Message::Services(services::Message::Done(Err(long()))));
+        }
+        Page::Users => {
+            let uid = app.processes.all()[0].uid;
+            update(app, Message::Users(users::Message::Select(uid)));
+            update(app, Message::Users(users::Message::Done(Err(long()))));
+        }
+        Page::Flight => update(app, Message::Flight(flight::Message::Deleted(Err(long())))),
+        Page::Benchmarks => update(
+            app,
+            Message::Benchmarks(benchmarks::Message::Loaded(Err(long()))),
+        ),
+        Page::Startup => {
+            update(app, Message::Startup(startup::Message::Loaded(Vec::new())));
+            update(
+                app,
+                Message::Startup(startup::Message::Toggled(Err(long()))),
+            );
+        }
+        Page::Info => {
+            let vitals = app.history.latest().unwrap().clone();
+            let report = peepers_core::report::Report::build(
+                &vitals,
+                &peepers_core::cpu::Info::read(),
+                &peepers_core::volumes::read(),
+            );
+            update(app, Message::Info(info::Message::Built(Box::new(report))));
+            update(app, Message::Info(info::Message::Exported(Err(long()))));
+        }
+        Page::Settings => update(
+            app,
+            Message::Settings(settings::Message::Saved(Err(long()))),
+        ),
+        _ => unreachable!("{page:?} keeps no failure on screen"),
+    }
+}
+
+#[test]
+fn a_long_failure_leaves_its_dismiss_button_whole_and_inside_the_window() {
+    for page in [
+        Page::Processes,
+        Page::Services,
+        Page::Users,
+        Page::Flight,
+        Page::Benchmarks,
+        Page::Startup,
+        Page::Info,
+        Page::Settings,
+    ] {
+        let mut app = sampled();
+        update(&mut app, Message::Navigate(page));
+        for size in [WINDOW, Size::new(800.0, 600.0)] {
+            let mut dismiss = |message: &str| {
+                fail(&mut app, page, message);
+                ui_sized(&app, size)
+                    .find("Dismiss")
+                    .unwrap_or_else(|_| panic!("{page:?} has no Dismiss at {size:?}"))
+                    .bounds()
+            };
+            let (short, long) = (dismiss("Nope"), dismiss(LONG_ERROR));
+            assert!(
+                (long.width - short.width).abs() < 0.5
+                    && long.x >= 0.0
+                    && long.x + long.width <= size.width,
+                "{page:?} in {size:?} draws Dismiss at {long:?} where a short failure has {short:?}"
+            );
+        }
+    }
+}
+
 /// The first `NVMe` disk of this machine opened on the Performance page, if it has one.
 fn nvme_disk() -> Option<(Peepers, String)> {
     let mut app = sampled();
@@ -768,6 +867,7 @@ fn render_pages() {
     render_sizes(&mut app, &directory);
     render_devices(&mut app, &directory);
     render_recordings(&mut app, &directory);
+    render_failures(&directory);
     render_health(&directory);
     let snapshot = popout(&mut app).snapshot(&Theme::Dark).unwrap();
     assert!(
@@ -863,6 +963,30 @@ fn render_health(directory: &str) {
         assert!(
             snapshot
                 .matches_image(format!("{directory}/{file}"))
+                .unwrap()
+        );
+    }
+}
+
+/// Every page that keeps a failure on screen, with one that is long.
+fn render_failures(directory: &str) {
+    for page in [
+        Page::Processes,
+        Page::Services,
+        Page::Users,
+        Page::Flight,
+        Page::Benchmarks,
+        Page::Startup,
+        Page::Info,
+        Page::Settings,
+    ] {
+        let mut app = sampled();
+        update(&mut app, Message::Navigate(page));
+        fail(&mut app, page, LONG_ERROR);
+        let snapshot = ui(&app).snapshot(&Theme::Dark).unwrap();
+        assert!(
+            snapshot
+                .matches_image(format!("{directory}/Failure-{page:?}"))
                 .unwrap()
         );
     }

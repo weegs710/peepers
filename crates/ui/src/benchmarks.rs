@@ -18,6 +18,7 @@ use peepers_core::bench::{Event, Gpu, History, Job, Loaded, Outcome, Record, Run
 use crate::blocking;
 use crate::format;
 use crate::gpu_bench;
+use crate::notice::Notice;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 const POLL: Duration = Duration::from_millis(100);
@@ -93,6 +94,7 @@ pub enum Message {
     Poll,
     Clear,
     Saved(Result<(), String>),
+    Dismiss,
 }
 
 /// One thing the queue can run: a core benchmark polled on its own thread, or the graphics test.
@@ -126,7 +128,7 @@ pub struct Benchmarks {
     history_path: PathBuf,
     active: Option<Active>,
     queue: VecDeque<Step>,
-    notice: Option<(String, bool)>,
+    notice: Option<Notice>,
     disk: disk::State,
     gpu: gpu::State,
     internet: internet::State,
@@ -188,21 +190,18 @@ impl Benchmarks {
             Message::Loaded(Ok(loaded)) => {
                 self.history = loaded.history;
                 self.notice = (loaded.skipped > 0).then(|| {
-                    (
-                        format!(
-                            "{} earlier results were made by an older version of these tests, which measured differently, and are not shown.",
-                            loaded.skipped
-                        ),
-                        false,
-                    )
+                    Notice::note(format!(
+                        "{} earlier results were made by an older version of these tests, which measured differently, and are not shown.",
+                        loaded.skipped
+                    ))
                 });
             }
             Message::Loaded(Err(error)) => {
-                self.notice = Some((
-                    format!("The benchmark history could not be read: {error}"),
-                    true,
-                ));
+                self.notice = Some(Notice::failure(format!(
+                    "The benchmark history could not be read: {error}"
+                )));
             }
+            Message::Dismiss => self.notice = None,
             Message::Select(section) => {
                 self.section = section;
                 return self.load(section);
@@ -232,10 +231,9 @@ impl Benchmarks {
             }
             Message::Saved(result) => {
                 if let Err(error) = result {
-                    self.notice = Some((
-                        format!("The benchmark history was not saved: {error}"),
-                        true,
-                    ));
+                    self.notice = Some(Notice::failure(format!(
+                        "The benchmark history was not saved: {error}"
+                    )));
                 }
             }
         }
@@ -290,7 +288,7 @@ impl Benchmarks {
             }
             Err(error) => {
                 self.queue.clear();
-                self.notice = Some((error, true));
+                self.notice = Some(Notice::failure(error));
                 Task::none()
             }
         }
@@ -325,7 +323,7 @@ impl Benchmarks {
             }
             Err(error) => {
                 self.queue.clear();
-                self.notice = Some((error, true));
+                self.notice = Some(Notice::failure(error));
                 Task::none()
             }
         }
@@ -402,11 +400,7 @@ impl Benchmarks {
     fn notice_line(&self) -> Element<'_, Message> {
         self.notice.as_ref().map_or_else(
             || space::vertical().height(0).into(),
-            |(message, failed)| {
-                text(message)
-                    .style(if *failed { text::danger } else { text::success })
-                    .into()
-            },
+            |notice| notice.view(Message::Dismiss),
         )
     }
 
