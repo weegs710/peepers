@@ -103,6 +103,21 @@ pub struct Reading {
 }
 
 impl Reading {
+    /// A reading from a tool that reports in the unit of [`Kind::unit`], not from sysfs.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a sensor value is far inside the range of an i64"
+    )]
+    pub(crate) fn measured(chip: &str, label: &str, kind: Kind, value: f32) -> Self {
+        Self {
+            chip: chip.to_owned(),
+            label: label.to_owned(),
+            kind,
+            raw: (f64::from(value) * f64::from(kind.scale())).round() as i64,
+        }
+    }
+
     #[must_use]
     #[expect(
         clippy::cast_precision_loss,
@@ -249,6 +264,49 @@ mod tests {
             raw: 45_500,
         };
         assert!((reading.value() - 45.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_measured_reading_reads_back_in_its_unit() {
+        let reading = Reading::measured("nvidia", "power draw", Kind::Power, 23.5);
+        assert!((reading.value() - 23.5).abs() < 1e-4);
+        let reading = Reading::measured("nvidia", "graphics clock", Kind::Frequency, 1950.0);
+        assert!((reading.value() - 1950.0).abs() < 1e-3);
+    }
+
+    /// The attributes the kernel documents for the `i915` driver on a discrete card: only the
+    /// `_input` ones are readings, the limits and the energy counter are not.
+    #[test]
+    fn an_intel_card_shows_its_temperature_fan_and_voltage_and_none_of_its_limits() {
+        let directory = std::env::current_exe()
+            .unwrap()
+            .with_file_name(format!("sensors-i915-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        for (file, content) in [
+            ("name", "i915"),
+            ("temp1_input", "61000"),
+            ("fan1_input", "1450"),
+            ("in0_input", "950"),
+            ("power1_max", "190000000"),
+            ("power1_rated_max", "225000000"),
+            ("energy1_input", "123456"),
+        ] {
+            fs::write(directory.join(file), format!("{content}\n")).unwrap();
+        }
+        let readings = read_chip(&directory);
+        fs::remove_dir_all(&directory).unwrap();
+        let value = |kind| {
+            readings
+                .iter()
+                .find(|reading| reading.kind == kind)
+                .map(Reading::value)
+                .unwrap()
+        };
+        assert_eq!(readings.len(), 3);
+        assert!((value(Kind::Temperature) - 61.0).abs() < 1e-3);
+        assert!((value(Kind::Voltage) - 0.95).abs() < 1e-3);
+        assert!((value(Kind::Fan) - 1450.0).abs() < 1e-3);
+        assert!(readings.iter().all(|reading| reading.chip == "i915"));
     }
 
     #[test]

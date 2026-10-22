@@ -60,6 +60,9 @@ impl Sampler {
     ///
     /// Fails when a kernel interface that every Linux system has cannot be read.
     pub fn sample(&mut self) -> io::Result<Sample> {
+        let adapters = self.gpu.sample();
+        let mut chips = self.chips.get(sensors::chips);
+        chips.extend(gpu::tool_chips(&adapters));
         let vitals = Vitals {
             uptime: system::uptime()?,
             load: Load::read()?,
@@ -72,8 +75,8 @@ impl Sampler {
             },
             disks: self.disk.sample()?,
             interfaces: self.network.sample()?,
-            adapters: self.gpu.sample(),
-            chips: self.chips.get(sensors::chips),
+            adapters,
+            chips,
             power: self.power.sample(),
         };
         let processes = self.process.sample()?;

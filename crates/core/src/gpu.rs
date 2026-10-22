@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::pci;
-use crate::sensors::{self, Reading};
+use crate::sensors::{self, Chip, Reading};
 use crate::sysfs;
 
 const DRM_DIR: &str = "/sys/class/drm";
@@ -60,6 +60,7 @@ impl Sampler {
                     {
                         adapter.busy = metrics.busy.or(adapter.busy);
                         adapter.vram = metrics.vram.or(adapter.vram);
+                        adapter.sensors.extend(metrics.sensors.iter().cloned());
                     }
                 }
                 _ => {}
@@ -67,6 +68,29 @@ impl Sampler {
         }
         adapters
     }
+}
+
+/// The adapters' readings that a vendor's tool gave and no hwmon chip carries, as the chips the
+/// pages list sensors by, so history can follow them.
+#[must_use]
+pub fn tool_chips(adapters: &[Adapter]) -> Vec<Chip> {
+    adapters
+        .iter()
+        .filter_map(|adapter| {
+            let readings: Vec<_> = adapter
+                .sensors
+                .iter()
+                .filter(|reading| reading.chip == nvidia::CHIP)
+                .cloned()
+                .collect();
+            (!readings.is_empty()).then(|| Chip {
+                id: format!("{}-{}", nvidia::CHIP, adapter.card),
+                name: nvidia::CHIP.to_owned(),
+                model: adapter.model.clone(),
+                readings,
+            })
+        })
+        .collect()
 }
 
 /// NVIDIA prints eight domain digits; sysfs and fdinfo normally print four.
@@ -189,6 +213,39 @@ fn pool(device: &Path, name: &str) -> Option<Pool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn adapter(card: &str, sensors: Vec<Reading>) -> Adapter {
+        Adapter {
+            card: card.to_owned(),
+            vendor: Vendor::Nvidia,
+            device: 0x2684,
+            model: Some("AD102 [GeForce RTX 4090]".to_owned()),
+            driver: Some("nvidia".to_owned()),
+            primary: true,
+            busy: None,
+            vram: None,
+            gtt: None,
+            link_speed: None,
+            link_width: None,
+            sensors,
+        }
+    }
+
+    #[test]
+    fn what_the_tool_reported_becomes_a_chip_the_pages_can_follow() {
+        let power = Reading::measured("nvidia", "power draw", sensors::Kind::Power, 120.0);
+        let hwmon = Reading::measured("amdgpu", "edge", sensors::Kind::Temperature, 50.0);
+        let chips = tool_chips(&[
+            adapter("card0", vec![power.clone()]),
+            adapter("card1", vec![hwmon]),
+            adapter("card2", Vec::new()),
+        ]);
+        assert_eq!(chips.len(), 1);
+        assert_eq!(chips[0].id, "nvidia-card0");
+        assert_eq!(chips[0].name, "nvidia");
+        assert_eq!(chips[0].model.as_deref(), Some("AD102 [GeForce RTX 4090]"));
+        assert_eq!(chips[0].readings, [power]);
+    }
 
     #[test]
     fn known_pci_vendors_get_names() {
