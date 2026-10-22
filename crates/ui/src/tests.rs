@@ -551,7 +551,9 @@ fn a_recording_runs_while_other_pages_are_open() {
             Message::Sampled(Arc::new(sampler.sample().unwrap())),
         );
     }
-    assert!(ui(&app).find("Recording, 3 samples").is_ok());
+    let status = app.flight.status().unwrap();
+    assert!(status.starts_with("Recording 0:00:0"));
+    assert!(status.ends_with(" left"));
 }
 
 #[test]

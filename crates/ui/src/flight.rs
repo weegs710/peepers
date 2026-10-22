@@ -187,21 +187,30 @@ impl Flight {
         self.recorder = None;
     }
 
-    /// A line for the navigation rail while a recording is running.
+    /// A line for the navigation rail while a recording is running: how long it has run and how
+    /// much longer it can.
     pub fn status(&self) -> Option<String> {
-        self.recorder
-            .as_ref()
-            .map(|recorder| format!("Recording, {} samples", recorder.frames()))
+        self.recorder.as_ref().map(|recorder| {
+            let elapsed = format::uptime(recorder.elapsed());
+            recorder.remaining().map_or_else(
+                || format!("Recording {elapsed}"),
+                |left| format!("Recording {elapsed}, {} left", format::uptime(left)),
+            )
+        })
     }
 
     /// Feeds the recording, if one is running, with the newest sample.
     pub fn record(&mut self, vitals: &Vitals) {
         if let Some(recorder) = &mut self.recorder
+            && !self.full
             && !recorder.record(vitals)
         {
             self.full = true;
             self.notice = Some((
-                "The recording is full. Stop it to save what was captured.".to_owned(),
+                format!(
+                    "The recording is full after {}. Stop it to save what was captured.",
+                    format::uptime(recorder.elapsed())
+                ),
                 true,
             ));
         }
