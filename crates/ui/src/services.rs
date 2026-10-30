@@ -3,12 +3,13 @@ use std::time::Duration;
 
 use iced::time;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
 
 use crate::blocking;
 use crate::notice::{self, Notice};
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
@@ -141,19 +142,10 @@ impl Services {
 
         let selected = self.selected.as_ref();
         let columns = [
-            table::column(
-                header("Service", Column::Service),
-                move |service: &Service| {
-                    button(text(service.name.clone()).wrapping(Wrapping::WordOrGlyph))
-                        .on_press(Message::Select(service.name.clone(), service.bus))
-                        .padding([0, 6])
-                        .style(if selected == Some(&(service.name.clone(), service.bus)) {
-                            button::primary
-                        } else {
-                            button::text
-                        })
-                },
-            )
+            table::column(header("Service", Column::Service), |service: &Service| {
+                container(text(service.name.clone()).wrapping(Wrapping::WordOrGlyph))
+                    .padding([0, 6])
+            })
             .width(Fill),
             table::column(
                 header("Description", Column::Description),
@@ -192,9 +184,16 @@ impl Services {
 
         column![
             toolbar,
-            scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                .width(Fill)
-                .height(Fill)
+            scrolling(selectable::table(
+                columns,
+                rows,
+                |service| Message::Select(service.name.clone(), service.bus),
+                |service| {
+                    selected.is_some_and(|(name, bus)| *name == service.name && *bus == service.bus)
+                },
+            ))
+            .width(Fill)
+            .height(Fill)
         ]
         .extend(self.panel(list))
         .into()
