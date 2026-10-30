@@ -9,6 +9,7 @@ mod format;
 mod gpu_bench;
 mod graph;
 mod history;
+mod icons;
 mod info;
 mod ipc;
 mod notice;
@@ -606,15 +607,20 @@ impl Peepers {
         }
         let pages = column(Page::SECTIONS.iter().flat_map(|&(title, pages)| {
             iter::once(heading(title)).chain(pages.iter().map(|&page| {
-                button(page.label())
-                    .width(Fill)
-                    .on_press(Message::Navigate(page))
-                    .style(if page == self.page {
-                        button::primary
-                    } else {
-                        button::text
-                    })
-                    .into()
+                let current = page == self.page;
+                button(
+                    row![icons::page(page, current), text(page.label())]
+                        .spacing(8)
+                        .align_y(iced::Center),
+                )
+                .width(Fill)
+                .on_press(Message::Navigate(page))
+                .style(if current {
+                    button::primary
+                } else {
+                    button::text
+                })
+                .into()
             }))
         }))
         .spacing(4)

@@ -1,6 +1,6 @@
 # Features
 
-What each page shows and what it can change, in the order the navigation rail lists them.
+What each page shows and what it can change, in the order the navigation rail lists them. Each page has an icon beside its name in the rail.
 
 Every table sorts by its columns. Click a heading to sort by that column, and an arrow beside it shows the direction. Click it again to reverse. Number columns start with the largest value first and text columns start at A. The tables are Processes, Connections, Drivers, Disk space (folders, files and file types), Installed apps, Startup apps, Services, Users and the Benchmarks history.
 
