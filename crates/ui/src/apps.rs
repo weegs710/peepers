@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 
-use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
 use iced::{Element, Fill, Task};
 use peepers_core::apps::{self, App, Scope};
 
 use crate::blocking;
 use crate::format;
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,15 +96,8 @@ impl Apps {
 
         let selected = self.selected.as_deref();
         let columns = [
-            table::column(header("Name", Column::Name), move |app: &App| {
-                button(text(app.name.clone()))
-                    .on_press(Message::Select(app.id.clone()))
-                    .padding([0, 6])
-                    .style(if selected == Some(app.id.as_str()) {
-                        button::primary
-                    } else {
-                        button::text
-                    })
+            table::column(header("Name", Column::Name), |app: &App| {
+                container(text(app.name.clone())).padding([0, 6])
             })
             .width(Fill),
             table::column(
@@ -135,9 +129,14 @@ impl Apps {
 
         column![
             toolbar,
-            scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                .width(Fill)
-                .height(Fill)
+            scrolling(selectable::table(
+                columns,
+                rows,
+                |app| Message::Select(app.id.clone()),
+                |app| selected == Some(app.id.as_str()),
+            ))
+            .width(Fill)
+            .height(Fill)
         ]
         .extend(
             selected
