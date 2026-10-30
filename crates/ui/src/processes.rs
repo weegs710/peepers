@@ -17,6 +17,7 @@ use peepers_core::users::Users;
 use self::panel::{Panel, Priority};
 use self::rows::Row;
 use crate::notice::{self, Notice};
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 use crate::{blocking, format, storage};
 
@@ -267,10 +268,7 @@ impl Processes {
         let selected = self.selected;
         let users = &self.users;
         let columns = [
-            table::column(header("Name", Sort::Name), move |row: Row| {
-                name(row, selected)
-            })
-            .width(Fill),
+            table::column(header("Name", Sort::Name), name).width(Fill),
             table::column(header("PID", Sort::Pid), |row: Row| text(row.process.pid))
                 .align_x(Right),
             table::column(header("User", Sort::User), move |row: Row| {
@@ -316,9 +314,14 @@ impl Processes {
                     .into()
             }))
             .push(
-                scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                    .width(Fill)
-                    .height(Fill),
+                scrolling(selectable::table(
+                    columns,
+                    rows,
+                    |row| Message::Select(row.process.pid),
+                    |row| selected == Some(row.process.pid),
+                ))
+                .width(Fill)
+                .height(Fill),
             )
             .extend(self.panel())
             .into()
@@ -386,7 +389,7 @@ impl Processes {
     }
 }
 
-fn name(row: Row<'_>, selected: Option<u32>) -> Element<'_, Message> {
+fn name(row: Row<'_>) -> Element<'_, Message> {
     let toggle: Element<_> = if row.children > 0 {
         button(text(if row.collapsed { "+" } else { "-" }))
             .on_press(Message::Collapse(row.process.pid))
@@ -399,14 +402,7 @@ fn name(row: Row<'_>, selected: Option<u32>) -> Element<'_, Message> {
     iced::widget::row![
         space().width(f32::from(u16::try_from(row.depth).unwrap_or(u16::MAX)) * 16.0),
         toggle,
-        button(text(&row.process.name))
-            .on_press(Message::Select(row.process.pid))
-            .padding([0, 6])
-            .style(if selected == Some(row.process.pid) {
-                button::primary
-            } else {
-                button::text
-            }),
+        container(text(&row.process.name)).padding([0, 6]),
     ]
     .align_y(iced::Center)
     .into()
@@ -438,5 +434,35 @@ mod tests {
             drop(processes.update(message));
         }
         assert_eq!(processes.sorting.direction(Sort::Name), Some(true));
+    }
+
+    fn process(pid: u32, name: &str) -> Process {
+        Process {
+            pid,
+            parent: 0,
+            name: name.to_owned(),
+            state: process::State::Sleeping,
+            uid: 0,
+            threads: 1,
+            nice: 0,
+            cpu: 0.0,
+            memory: 0,
+            io: None,
+            started: Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn pressing_any_cell_of_a_process_selects_it() {
+        let processes = Processes {
+            list: vec![process(7, "alpha"), process(9, "beta")],
+            ..Processes::default()
+        };
+        for target in ["beta", "9"] {
+            assert!(matches!(
+                pressed(processes.view(), target).as_slice(),
+                [Message::Select(9)]
+            ));
+        }
     }
 }
