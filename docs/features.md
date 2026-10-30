@@ -4,6 +4,8 @@ What each page shows and what it can change, in the order the navigation rail li
 
 Every table sorts by its columns. Click a heading to sort by that column, and an arrow beside it shows the direction. Click it again to reverse. Number columns start with the largest value first and text columns start at A. The tables are Processes, Connections, Drivers, Disk space (folders, files and file types), Installed apps, Startup apps, Services, Users and the Benchmarks history.
 
+In Processes, Connections, Drivers, Installed apps, Services and Users, the row under the pointer is shaded and the selected row is marked across its whole width. Press anywhere on a row to select it.
+
 A line that reports what an action did goes away by itself after a few seconds when the action worked. A failure, and a note such as the Benchmarks one about older results, stays until you press Dismiss.
 
 ## Watch
