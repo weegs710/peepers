@@ -16,6 +16,7 @@ mod performance;
 mod power;
 mod pressure;
 mod processes;
+mod selectable;
 mod services;
 mod settings;
 mod startup;

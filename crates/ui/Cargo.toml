@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-iced = { version = "0.14", features = ["canvas", "smol"] }
+iced = { version = "0.14", features = ["advanced", "canvas", "smol"] }
 jiff = "0.2.38"
 peepers-core.workspace = true
 serde = { version = "1", features = ["derive"] }

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, column, row, space, table, text};
+use iced::widget::{button, column, container, row, space, table, text};
 use iced::{Element, Fill, Right, Subscription, Task};
 use peepers_core::process::Process;
 use peepers_core::sessions::{self, Action, Session};
@@ -12,6 +12,7 @@ use crate::blocking;
 use crate::format;
 use crate::notice::{self, Notice};
 use crate::processes::Processes;
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header};
 
 const REFRESH: Duration = Duration::from_secs(5);
@@ -155,15 +156,8 @@ impl Users {
 
         let selected = self.selected;
         let columns = [
-            table::column(header("User", Column::User), move |row: Row| {
-                button(text(row.name))
-                    .on_press(Message::Select(row.uid))
-                    .padding([0, 6])
-                    .style(if selected == Some(row.uid) {
-                        button::primary
-                    } else {
-                        button::text
-                    })
+            table::column(header("User", Column::User), |row: Row| {
+                container(text(row.name)).padding([0, 6])
             })
             .width(Fill),
             table::column(header("Sessions", Column::Sessions), |row: Row| {
@@ -207,9 +201,14 @@ impl Users {
         });
 
         column![
-            scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                .width(Fill)
-                .height(Fill)
+            scrolling(selectable::table(
+                columns,
+                rows,
+                |row| Message::Select(row.uid),
+                |row| selected == Some(row.uid),
+            ))
+            .width(Fill)
+            .height(Fill)
         ]
         .extend(actions)
         .into()
