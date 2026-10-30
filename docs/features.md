@@ -125,4 +125,4 @@ A narrow second window of live gauges: the same device cards as Performance, in 
 
 ## The tray icon
 
-An icon that shows the processor and memory load, when a tray host is running. Its menu has Window, Popout, Pause and Quit. Activating the icon brings the window forward, or hides it when it is already in front. Closing the main window hides it to the tray while the icon exists. Without the icon, closing the main window ends the application.
+An icon that shows the processor and memory load, when a tray host is running. It has a panel for each, marked C and M, with the last 13 readings as columns that rise from the bottom, the newest on the right, and go from green to amber to red as the load climbs. A reading is added for every sample, so the trace spans 13 sample intervals. The tooltip gives the latest percentages. Its menu has Window, Popout, Pause and Quit. Activating the icon brings the window forward, or hides it when it is already in front. Closing the main window hides it to the tray while the icon exists. Without the icon, closing the main window ends the application.

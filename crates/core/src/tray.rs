@@ -16,7 +16,7 @@ use zbus::blocking::{Connection, connection};
 use zbus::interface;
 use zvariant::ObjectPath;
 
-use self::icon::Pixmap;
+use self::icon::{Pixmap, Trace};
 use self::menu::Menu;
 
 pub use self::icon::Gauges;
@@ -32,7 +32,7 @@ const PERIOD: Duration = Duration::from_secs(1);
 
 /// The `StatusNotifierItem` a tray host draws.
 struct Item {
-    gauges: Gauges,
+    trace: Trace,
     events: Sender<Event>,
 }
 
@@ -73,7 +73,7 @@ impl Item {
         ObjectPath::from_static_str_unchecked(menu::PATH)
     }
 
-    /// Empty so that hosts, which prefer a name over pixels, draw the gauges.
+    /// Empty so that hosts, which prefer a name over pixels, draw the traces.
     #[zbus(property)]
     fn icon_name(&self) -> &'static str {
         ""
@@ -81,7 +81,7 @@ impl Item {
 
     #[zbus(property)]
     fn icon_pixmap(&self) -> Vec<Pixmap> {
-        vec![self.gauges.pixmap()]
+        self.trace.pixmaps()
     }
 
     #[zbus(property)]
@@ -90,7 +90,7 @@ impl Item {
             String::new(),
             Vec::new(),
             "peepers".to_owned(),
-            self.gauges.to_string(),
+            self.trace.latest().to_string(),
         )
     }
 
@@ -103,7 +103,7 @@ impl Item {
 /// Everything the tray shows, which the application changes a part of at a time.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct State {
-    gauges: Gauges,
+    trace: Trace,
     window_open: bool,
     popout_open: bool,
     paused: bool,
@@ -157,7 +157,7 @@ impl Tray {
                 builder.serve_at(
                     PATH,
                     Item {
-                        gauges: Gauges::default(),
+                        trace: Trace::default(),
                         events: clicks.clone(),
                     },
                 )
@@ -202,8 +202,9 @@ impl Tray {
         self.events.clone()
     }
 
+    /// Adds a reading to the traces, which keep the latest few.
     pub fn show(&self, gauges: Gauges) {
-        self.change(|state| state.gauges = gauges);
+        self.change(|state| state.trace.push(gauges));
     }
 
     /// Whether the window is open, which the menu's first entry offers to reverse.
@@ -245,11 +246,11 @@ fn publish(connection: &Connection, state: &Mutex<State>, woken: &Receiver<()>) 
         if now == shown {
             continue;
         }
-        let icon = now.gauges.pixmap() != shown.gauges.pixmap();
-        let tooltip = now.gauges.to_string() != shown.gauges.to_string();
+        let icon = now.trace.pixmaps() != shown.trace.pixmaps();
+        let tooltip = now.trace.latest().to_string() != shown.trace.latest().to_string();
         let entries = (now.window_open, now.popout_open, now.paused)
             != (shown.window_open, shown.popout_open, shown.paused);
-        item.get_mut().gauges = now.gauges;
+        item.get_mut().trace = now.trace;
         let revision = {
             let mut menu = menu.get_mut();
             menu.window_open = now.window_open;
@@ -339,14 +340,16 @@ mod tests {
 
         let item = item(&bus);
         let icon = || item.get_property::<Vec<Pixmap>>("IconPixmap").unwrap();
-        assert_eq!(icon(), [Gauges::default().pixmap()]);
+        assert_eq!(icon(), Trace::default().pixmaps());
         let busy = Gauges {
             cpu: 100.0,
             memory: 90.0,
         };
         tray.show(busy);
         settle();
-        assert_eq!(icon(), [busy.pixmap()]);
+        let mut traced = Trace::default();
+        traced.push(busy);
+        assert_eq!(icon(), traced.pixmaps());
 
         let events = tray.events();
         item.call_method("Activate", &(0_i32, 0_i32)).unwrap();

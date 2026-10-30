@@ -5,11 +5,28 @@ use crate::telemetry::Vitals;
 /// Icons travel as width, height and ARGB32 bytes in network order.
 pub(super) type Pixmap = (i32, i32, Vec<u8>);
 
-const SIZE: usize = 32;
-const MARGIN: usize = 2;
-const BAR_WIDTH: usize = 12;
-const BAR_HEIGHT: u8 = 28;
-const TRACK: [u8; 3] = [0x60, 0x60, 0x60];
+/// The size a tray that draws at 22 pixels shows the icon at without scaling it.
+const SIZE: usize = 22;
+/// Whole multiples of [`SIZE`] the icon is offered at, for a host that draws it larger.
+const MAGNIFICATIONS: [usize; 2] = [1, 2];
+const PANEL_HEIGHT: usize = 10;
+const GAP: usize = SIZE - 2 * PANEL_HEIGHT;
+const LABEL_X: usize = 1;
+const PLOT_X: usize = 8;
+const PLOT_TOP: usize = 1;
+const PLOT_ROWS: u8 = 8;
+/// How many readings the icon traces, one to a column.
+const SAMPLES: usize = SIZE - PLOT_X - 1;
+/// Opaque, so that the letters read the same on a light tray as on a dark one.
+const BACKGROUND: [u8; 3] = [0x24, 0x24, 0x24];
+const INK: [u8; 3] = [0xe0, 0xe0, 0xe0];
+
+const CPU_LABEL: [&str; 7] = [
+    ".###.", "#...#", "#....", "#....", "#....", "#...#", ".###.",
+];
+const MEMORY_LABEL: [&str; 7] = [
+    "#...#", "##.##", "#.#.#", "#...#", "#...#", "#...#", "#...#",
+];
 
 /// What the icon shows, as percentages.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -37,35 +54,98 @@ impl fmt::Display for Gauges {
     }
 }
 
-impl Gauges {
-    /// One bar per gauge, filling from the bottom and turning from green to red as it rises.
-    pub(super) fn pixmap(self) -> Pixmap {
-        let bars = [(MARGIN, self.cpu), (SIZE - MARGIN - BAR_WIDTH, self.memory)];
+/// The latest readings, oldest first, which the icon draws as a trace for each gauge.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(super) struct Trace {
+    cpu: [f32; SAMPLES],
+    memory: [f32; SAMPLES],
+}
+
+impl Trace {
+    pub(super) fn push(&mut self, gauges: Gauges) {
+        for (readings, latest) in [
+            (&mut self.cpu, gauges.cpu),
+            (&mut self.memory, gauges.memory),
+        ] {
+            readings.rotate_left(1);
+            readings[SAMPLES - 1] = latest;
+        }
+    }
+
+    pub(super) fn latest(&self) -> Gauges {
+        Gauges {
+            cpu: self.cpu[SAMPLES - 1],
+            memory: self.memory[SAMPLES - 1],
+        }
+    }
+
+    /// The icon at each size it is offered at.
+    pub(super) fn pixmaps(&self) -> Vec<Pixmap> {
+        let raster = self.raster();
+        MAGNIFICATIONS
+            .into_iter()
+            .map(|factor| magnified(&raster, factor))
+            .collect()
+    }
+
+    /// A panel for each gauge, its letter on the left and its readings rising from the bottom, each
+    /// turning from green to red as it climbs.
+    fn raster(&self) -> Vec<u8> {
         let mut data = vec![0; SIZE * SIZE * 4];
-        for (left, level) in bars {
-            let filled = rows(level);
-            for row in 0..usize::from(BAR_HEIGHT) {
-                let lit = usize::from(BAR_HEIGHT) - row <= filled;
-                let [red, green, blue] = if lit { colour(level) } else { TRACK };
-                for column in left..left + BAR_WIDTH {
-                    let at = ((row + MARGIN) * SIZE + column) * 4;
-                    data[at..at + 4].copy_from_slice(&[0xff, red, green, blue]);
+        let panels = [(&CPU_LABEL, &self.cpu), (&MEMORY_LABEL, &self.memory)];
+        for (index, (label, readings)) in panels.into_iter().enumerate() {
+            let top = index * (PANEL_HEIGHT + GAP);
+            for row in top..top + PANEL_HEIGHT {
+                for column in 0..SIZE {
+                    paint(&mut data, row, column, BACKGROUND);
+                }
+            }
+            let label_top = top + (PANEL_HEIGHT - label.len()) / 2;
+            for (y, line) in label.iter().enumerate() {
+                for (x, mark) in line.bytes().enumerate() {
+                    if mark == b'#' {
+                        paint(&mut data, label_top + y, LABEL_X + x, INK);
+                    }
+                }
+            }
+            let bottom = top + PLOT_TOP + usize::from(PLOT_ROWS) - 1;
+            for (offset, &level) in readings.iter().enumerate() {
+                for lit in 0..rows(level) {
+                    paint(&mut data, bottom - lit, PLOT_X + offset, colour(level));
                 }
             }
         }
-        let side = i32::try_from(SIZE).unwrap_or(i32::MAX);
-        (side, side, data)
+        data
     }
 }
 
-/// How many of the bar's rows a level fills.
+/// The raster with each of its pixels drawn as a square `factor` pixels across.
+fn magnified(raster: &[u8], factor: usize) -> Pixmap {
+    let side = SIZE * factor;
+    let mut data = Vec::with_capacity(side * side * 4);
+    for row in 0..side {
+        for column in 0..side {
+            let at = (row / factor * SIZE + column / factor) * 4;
+            data.extend_from_slice(&raster[at..at + 4]);
+        }
+    }
+    let side = i32::try_from(side).unwrap_or(i32::MAX);
+    (side, side, data)
+}
+
+fn paint(data: &mut [u8], row: usize, column: usize, [red, green, blue]: [u8; 3]) {
+    let at = (row * SIZE + column) * 4;
+    data[at..at + 4].copy_from_slice(&[0xff, red, green, blue]);
+}
+
+/// How many of the plot's rows a level fills.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "clamped to 0..=100, so the product lies in 0..=BAR_HEIGHT"
+    reason = "clamped to 0..=100, so the product lies in 0..=PLOT_ROWS"
 )]
 fn rows(level: f32) -> usize {
-    (level.clamp(0.0, 100.0) / 100.0 * f32::from(BAR_HEIGHT)).round() as usize
+    (level.clamp(0.0, 100.0) / 100.0 * f32::from(PLOT_ROWS)).round() as usize
 }
 
 fn colour(level: f32) -> [u8; 3] {
@@ -82,63 +162,143 @@ fn colour(level: f32) -> [u8; 3] {
 mod tests {
     use super::*;
 
-    fn pixel(pixmap: &Pixmap, row: usize, column: usize) -> &[u8] {
+    fn pixel(raster: &[u8], row: usize, column: usize) -> [u8; 4] {
         let at = (row * SIZE + column) * 4;
-        &pixmap.2[at..at + 4]
+        raster[at..at + 4].try_into().unwrap()
     }
 
-    const BOTTOM: usize = MARGIN + BAR_HEIGHT as usize - 1;
-    const TOP: usize = MARGIN;
-    const MEMORY: usize = SIZE - MARGIN - BAR_WIDTH;
-
-    #[test]
-    fn the_pixmap_is_a_square_of_four_byte_pixels() {
-        let (width, height, data) = Gauges::default().pixmap();
-        assert_eq!((width, height), (32, 32));
-        assert_eq!(data.len(), 32 * 32 * 4);
+    fn opaque([red, green, blue]: [u8; 3]) -> [u8; 4] {
+        [0xff, red, green, blue]
     }
 
-    #[test]
-    fn a_full_bar_is_lit_to_the_top_in_red() {
-        let pixmap = Gauges {
-            cpu: 100.0,
-            memory: 0.0,
+    const NEWEST: usize = PLOT_X + SAMPLES - 1;
+    const CPU_TOP: usize = 0;
+    const MEMORY_TOP: usize = PANEL_HEIGHT + GAP;
+    const PLOT_BOTTOM: usize = PLOT_TOP + PLOT_ROWS as usize - 1;
+
+    fn traced(readings: &[(f32, f32)]) -> Trace {
+        let mut trace = Trace::default();
+        for &(cpu, memory) in readings {
+            trace.push(Gauges { cpu, memory });
         }
-        .pixmap();
-        assert_eq!(pixel(&pixmap, TOP, MARGIN), [0xff, 0xe5, 0x39, 0x35]);
-        assert_eq!(pixel(&pixmap, TOP, MEMORY), [0xff, 0x60, 0x60, 0x60]);
+        trace
     }
 
     #[test]
-    fn a_half_bar_is_lit_from_the_bottom_in_green() {
-        let pixmap = Gauges {
-            cpu: 50.0,
-            memory: 50.0,
+    fn the_icon_is_offered_as_squares_of_four_byte_pixels_at_whole_multiples_of_its_size() {
+        let sizes: Vec<(i32, i32, usize)> = Trace::default()
+            .pixmaps()
+            .into_iter()
+            .map(|(width, height, data)| (width, height, data.len()))
+            .collect();
+        assert_eq!(sizes, [(22, 22, 22 * 22 * 4), (44, 44, 44 * 44 * 4)]);
+    }
+
+    #[test]
+    fn a_magnified_icon_draws_each_pixel_as_a_block_of_the_same_colour() {
+        let trace = traced(&[(100.0, 0.0)]);
+        let raster = trace.raster();
+        let (_, _, data) = &trace.pixmaps()[1];
+        let (row, column) = (CPU_TOP + PLOT_TOP, NEWEST);
+        for (down, across) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            let at = ((row * 2 + down) * SIZE * 2 + column * 2 + across) * 4;
+            assert_eq!(data[at..at + 4], pixel(&raster, row, column));
         }
-        .pixmap();
-        assert_eq!(pixel(&pixmap, BOTTOM, MARGIN), [0xff, 0x4c, 0xaf, 0x50]);
-        assert_eq!(pixel(&pixmap, TOP, MARGIN), [0xff, 0x60, 0x60, 0x60]);
-        assert_eq!(pixel(&pixmap, BOTTOM, MEMORY), [0xff, 0x4c, 0xaf, 0x50]);
+        assert_eq!(pixel(&raster, row, column), opaque([0xe5, 0x39, 0x35]));
     }
 
     #[test]
-    fn an_empty_bar_shows_only_the_track() {
-        let pixmap = Gauges::default().pixmap();
-        assert_eq!(pixel(&pixmap, BOTTOM, MARGIN), [0xff, 0x60, 0x60, 0x60]);
+    fn a_full_reading_is_lit_to_the_top_in_red() {
+        let pixmap = traced(&[(100.0, 0.0)]).raster();
+        assert_eq!(
+            pixel(&pixmap, CPU_TOP + PLOT_TOP, NEWEST),
+            opaque([0xe5, 0x39, 0x35])
+        );
+        assert_eq!(
+            pixel(&pixmap, MEMORY_TOP + PLOT_TOP, NEWEST),
+            opaque(BACKGROUND)
+        );
+    }
+
+    #[test]
+    fn a_half_reading_is_lit_from_the_bottom_in_green() {
+        let pixmap = traced(&[(50.0, 50.0)]).raster();
+        for top in [CPU_TOP, MEMORY_TOP] {
+            assert_eq!(
+                pixel(&pixmap, top + PLOT_BOTTOM, NEWEST),
+                opaque([0x4c, 0xaf, 0x50])
+            );
+            assert_eq!(pixel(&pixmap, top + PLOT_TOP, NEWEST), opaque(BACKGROUND));
+        }
+    }
+
+    #[test]
+    fn an_earlier_reading_moves_left_as_the_next_one_arrives() {
+        let pixmap = traced(&[(100.0, 0.0), (0.0, 0.0)]).raster();
+        assert_eq!(
+            pixel(&pixmap, CPU_TOP + PLOT_TOP, NEWEST - 1),
+            opaque([0xe5, 0x39, 0x35])
+        );
+        assert_eq!(
+            pixel(&pixmap, CPU_TOP + PLOT_TOP, NEWEST),
+            opaque(BACKGROUND)
+        );
+    }
+
+    #[test]
+    fn a_reading_leaves_the_trace_once_it_is_older_than_the_window() {
+        let mut readings = vec![(100.0, 100.0)];
+        readings.resize(SAMPLES + 1, (0.0, 0.0));
+        let pixmap = traced(&readings).raster();
+        for column in PLOT_X..=NEWEST {
+            assert_eq!(
+                pixel(&pixmap, CPU_TOP + PLOT_BOTTOM, column),
+                opaque(BACKGROUND)
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_traced_before_the_first_reading() {
+        let pixmap = Trace::default().raster();
+        for top in [CPU_TOP, MEMORY_TOP] {
+            for column in PLOT_X..=NEWEST {
+                assert_eq!(
+                    pixel(&pixmap, top + PLOT_BOTTOM, column),
+                    opaque(BACKGROUND)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_panel_carries_its_own_letter() {
+        let pixmap = Trace::default().raster();
+        let label_top = (PANEL_HEIGHT - CPU_LABEL.len()) / 2;
+        let at = |top: usize, column: usize| pixel(&pixmap, top + label_top, column);
+        assert_eq!(at(CPU_TOP, LABEL_X + 1), opaque(INK));
+        assert_eq!(at(CPU_TOP, LABEL_X), opaque(BACKGROUND));
+        assert_eq!(at(MEMORY_TOP, LABEL_X), opaque(INK));
+        assert_eq!(at(MEMORY_TOP, LABEL_X + 1), opaque(BACKGROUND));
     }
 
     #[test]
     fn levels_beyond_the_scale_are_clamped() {
-        assert_eq!(rows(250.0), usize::from(BAR_HEIGHT));
+        assert_eq!(rows(250.0), usize::from(PLOT_ROWS));
         assert_eq!(rows(-5.0), 0);
     }
 
     #[test]
-    fn the_tooltip_reads_the_gauges() {
-        let gauges = Gauges {
+    fn the_tooltip_reads_the_latest_gauges() {
+        let mut trace = Trace::default();
+        trace.push(Gauges {
+            cpu: 90.0,
+            memory: 10.0,
+        });
+        trace.push(Gauges {
             cpu: 12.4,
             memory: 41.6,
-        };
-        assert_eq!(gauges.to_string(), "CPU 12%   Memory 42%");
+        });
+        assert_eq!(trace.latest().to_string(), "CPU 12%   Memory 42%");
     }
 }

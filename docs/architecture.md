@@ -52,7 +52,7 @@ A close request on the main window hides it when the tray icon exists. Without t
 
 ### Tray
 
-A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifierWatcher`. It starts only when a watcher answers. Its menu has Window, Popout, Pause and Quit.
+A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifierWatcher`. It starts only when a watcher answers. The icon is drawn in code at 22 pixels, which a tray that draws at that size shows without scaling, and again at 44 for a host that draws it larger. Its menu has Window, Popout, Pause and Quit.
 
 ### Command door
 
