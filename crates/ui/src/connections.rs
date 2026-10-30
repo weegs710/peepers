@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, checkbox, column, pick_list, row, space, table, text, text_input};
+use iced::widget::{checkbox, column, container, pick_list, row, space, table, text, text_input};
 use iced::{Element, Fill, Subscription, Task};
 use peepers_core::connections::{self, Connection, Endpoint, Exposure, Protocol, State};
 
 use crate::blocking;
 use crate::processes::Processes;
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(2);
@@ -148,8 +149,8 @@ impl Connections {
 
         let selected = self.selected.as_ref();
         let columns = [
-            table::column(header("Process", Column::Process), move |row: Row| {
-                process_cell(&row, selected)
+            table::column(header("Process", Column::Process), |row: Row| {
+                process_cell(&row)
             })
             .width(Fill),
             table::column(header("Protocol", Column::Protocol), |row: Row| {
@@ -188,9 +189,14 @@ impl Connections {
 
         column![
             toolbar,
-            scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                .width(Fill)
-                .height(Fill)
+            scrolling(selectable::table(
+                columns,
+                rows,
+                |row| Message::Select(row.connection.clone()),
+                |row| selected == Some(row.connection),
+            ))
+            .width(Fill)
+            .height(Fill)
         ]
         .extend(
             self.selected
@@ -249,20 +255,12 @@ fn in_scope(scope: Scope, connection: &Connection) -> bool {
     }
 }
 
-fn process_cell<'a>(row: &Row<'a>, selected: Option<&Connection>) -> Element<'a, Message> {
+fn process_cell<'a>(row: &Row<'a>) -> Element<'a, Message> {
     let label = row.owner.as_ref().map_or_else(
         || "Not visible".to_owned(),
         |(pid, name)| format!("{name} ({pid})"),
     );
-    button(text(label))
-        .on_press(Message::Select(row.connection.clone()))
-        .padding([0, 6])
-        .style(if selected == Some(row.connection) {
-            button::primary
-        } else {
-            button::text
-        })
-        .into()
+    container(text(label)).padding([0, 6]).into()
 }
 
 fn route<'a>(
