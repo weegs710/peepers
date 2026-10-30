@@ -2,12 +2,13 @@ use std::cmp::Ordering;
 use std::time::Duration;
 
 use iced::time;
-use iced::widget::{button, checkbox, column, row, space, table, text, text_input};
+use iced::widget::{checkbox, column, container, row, space, table, text, text_input};
 use iced::{Element, Fill, Right, Subscription, Task};
 use peepers_core::drivers::{self, Driver, State};
 
 use crate::blocking;
 use crate::format;
+use crate::selectable;
 use crate::widgets::{Sortable, Sorting, scrolling, sort_header, stats};
 
 const REFRESH: Duration = Duration::from_secs(3);
@@ -101,15 +102,8 @@ impl Drivers {
 
         let selected = self.selected.as_deref();
         let columns = [
-            table::column(header("Module", Column::Module), move |driver: &Driver| {
-                button(text(driver.name.clone()))
-                    .on_press(Message::Select(driver.name.clone()))
-                    .padding([0, 6])
-                    .style(if selected == Some(driver.name.as_str()) {
-                        button::primary
-                    } else {
-                        button::text
-                    })
+            table::column(header("Module", Column::Module), |driver: &Driver| {
+                container(text(driver.name.clone())).padding([0, 6])
             })
             .width(Fill),
             table::column(header("Size", Column::Size), |driver: &Driver| {
@@ -156,9 +150,14 @@ impl Drivers {
 
         column![
             toolbar,
-            scrolling(table(columns, rows).padding_x(10).padding_y(2))
-                .width(Fill)
-                .height(Fill)
+            scrolling(selectable::table(
+                columns,
+                rows,
+                |driver| Message::Select(driver.name.clone()),
+                |driver| selected == Some(driver.name.as_str()),
+            ))
+            .width(Fill)
+            .height(Fill)
         ]
         .extend(
             selected
