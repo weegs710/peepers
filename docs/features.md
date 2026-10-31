@@ -117,7 +117,7 @@ Every user that owns a running process, with their sessions, process count, CPU 
 | Text size              | 12 to 24 in steps of 2, also `Ctrl` with `+`, `-` and `0` |
 | Tray icon              | on or off                                                 |
 
-Each change is saved as it is made. The page shows where the settings file is.
+Each change is saved as it is made. The page shows where the settings file is, and [The settings file](./settings.md) describes it.
 
 ## The popout
 

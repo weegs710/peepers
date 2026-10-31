@@ -65,4 +65,4 @@ A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifier
 
 ## Settings
 
-`settings.json` in `$XDG_CONFIG_HOME/peepers`, or `~/.config/peepers` when that is not set. Each change is written as it is made, through a temporary file renamed into place. A file that cannot be read leaves the defaults and says why on the Settings page.
+`settings.toml` in `$XDG_CONFIG_HOME/peepers`, or `~/.config/peepers` when that is not set. Each change is written as it is made: the file is read again, the settings that changed since peepers last read or wrote it are set in place, and the result is renamed into place from a temporary file. A file that cannot be read leaves the defaults and says why on the Settings page. [The settings file](./settings.md) lists the keys.

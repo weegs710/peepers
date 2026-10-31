@@ -176,6 +176,7 @@ enum Fate {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 enum Page {
     #[default]
     Processes,
@@ -326,7 +327,7 @@ impl Peepers {
     fn new() -> (Self, Task<Message>) {
         let preferences = Preferences::load();
         let mut app = Self {
-            page: preferences.settings.start_page,
+            page: preferences.settings.startup.page,
             preferences,
             ..Self::default()
         };
@@ -341,7 +342,7 @@ impl Peepers {
     fn sync_tray(&mut self) -> Task<Message> {
         let tray = self
             .tray
-            .sync(self.preferences.settings.tray)
+            .sync(self.preferences.settings.startup.tray)
             .map(Message::Tray);
         if self.tray.is_active() || self.windows.main.is_open() {
             tray
@@ -507,7 +508,8 @@ impl Peepers {
                 return Task::batch([saved, self.sync_tray()]);
             }
             Message::Tray(tray::Message::Started(result)) => {
-                self.tray.started(result, self.preferences.settings.tray);
+                self.tray
+                    .started(result, self.preferences.settings.startup.tray);
                 self.tray.set_window_open(self.windows.main.is_open());
                 self.tray.set_popout_open(self.windows.popout.is_open());
                 self.tray.set_paused(self.paused);
@@ -589,7 +591,7 @@ impl Peepers {
         } else {
             Subscription::none()
         };
-        let interval = self.preferences.settings.interval.duration();
+        let interval = self.preferences.settings.sampling.interval.duration();
         Subscription::batch([
             fade,
             telemetry::subscription(interval),
@@ -660,12 +662,12 @@ impl Peepers {
             Page::Processes => self.processes.view().map(Message::Processes),
             Page::Performance => self
                 .performance
-                .view(&self.history, self.preferences.settings.temperature)
+                .view(&self.history, self.preferences.settings.units.temperature)
                 .map(Message::Performance),
             Page::Pressure => {
                 pressure::view(&self.history, &self.processes).map(Message::Processes)
             }
-            Page::Power => power::view(&self.history, self.preferences.settings.temperature),
+            Page::Power => power::view(&self.history, self.preferences.settings.units.temperature),
             Page::Flight => self.flight.view().map(Message::Flight),
             Page::Benchmarks => self
                 .benchmarks

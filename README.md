@@ -33,6 +33,7 @@ The popout is a second, narrow window of the same live gauges that stays beside 
 
 **Documentation:** [Features](./docs/features.md) ·
 [Controlling a running peepers](./docs/control.md) ·
+[The settings file](./docs/settings.md) ·
 [Architecture](./docs/architecture.md) ·
 [Platforms](./docs/platforms.md) ·
 [Building and testing](./docs/building.md)

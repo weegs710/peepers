@@ -1,9 +1,7 @@
 use std::env;
 use std::fmt;
-use std::fs;
-use std::io;
 use std::ops::RangeInclusive;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
@@ -14,7 +12,10 @@ use crate::Page;
 use crate::blocking;
 use crate::notice::Notice;
 
+mod file;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Temperature {
     #[default]
     Celsius,
@@ -60,12 +61,18 @@ const TEXT_DEFAULT: u8 = 16;
 /// How often the machine is read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Interval {
+    #[serde(rename = "100ms")]
     Millis100,
+    #[serde(rename = "250ms")]
     Millis250,
+    #[serde(rename = "500ms")]
     Millis500,
     #[default]
+    #[serde(rename = "1s")]
     Second,
+    #[serde(rename = "2s")]
     TwoSeconds,
+    #[serde(rename = "5s")]
     FiveSeconds,
 }
 
@@ -102,85 +109,92 @@ impl fmt::Display for Interval {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The settings file, one table for each of these.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    appearance: Appearance,
+    pub startup: Startup,
+    pub sampling: Sampling,
+    pub units: Units,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+struct Appearance {
     /// A theme's name as iced lists it, so a file written by one version still loads in the next.
     theme: String,
-    pub start_page: Page,
-    pub temperature: Temperature,
-    pub interval: Interval,
-    pub tray: bool,
     /// The size body text is drawn at; everything else, graph lines and labels included, scales
     /// with it.
     text_size: u8,
 }
 
-impl Default for Settings {
+impl Default for Appearance {
     fn default() -> Self {
         Self {
             theme: Theme::Dark.to_string(),
-            start_page: Page::Processes,
-            temperature: Temperature::Celsius,
-            interval: Interval::Second,
-            tray: true,
             text_size: TEXT_DEFAULT,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Startup {
+    pub page: Page,
+    pub tray: bool,
+}
+
+impl Default for Startup {
+    fn default() -> Self {
+        Self {
+            page: Page::Processes,
+            tray: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sampling {
+    pub interval: Interval,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Units {
+    pub temperature: Temperature,
 }
 
 impl Settings {
     pub fn path() -> PathBuf {
         let home = env::var("HOME").unwrap_or_default();
         PathBuf::from(env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config")))
-            .join("peepers/settings.json")
-    }
-
-    /// A missing file is the defaults; a file that cannot be understood is an error.
-    fn read(path: &Path) -> Result<Self, String> {
-        match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map(Self::normalised)
-                .map_err(|error| error.to_string()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    /// Replaces the file in one step.
-    fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(directory) = path.parent() {
-            fs::create_dir_all(directory)?;
-        }
-        let partial = path.with_extension("json.partial");
-        fs::write(
-            &partial,
-            serde_json::to_string_pretty(self).map_err(io::Error::from)?,
-        )?;
-        fs::rename(partial, path)
+            .join("peepers/settings.toml")
     }
 
     /// The text size moved onto the nearest notch inside the allowed range, so a hand-edited file
     /// cannot make the interface unusable.
     fn normalised(mut self) -> Self {
         let (least, most) = (*TEXT_SIZES.start(), *TEXT_SIZES.end());
-        let notches = self.text_size.clamp(least, most) - least;
+        let notches = self.appearance.text_size.clamp(least, most) - least;
         let snapped = (notches + TEXT_STEP / 2) / TEXT_STEP * TEXT_STEP;
-        self.text_size = (least + snapped).min(most);
+        self.appearance.text_size = (least + snapped).min(most);
         self
     }
 
     /// How much larger or smaller than the default the interface is drawn.
     pub fn scale(&self) -> f32 {
-        f32::from(self.text_size) / f32::from(TEXT_DEFAULT)
+        f32::from(self.appearance.text_size) / f32::from(TEXT_DEFAULT)
     }
 
     /// The text size one step along, held inside the allowed range.
     fn zoomed(&self, zoom: Zoom) -> u8 {
         let (least, most) = (*TEXT_SIZES.start(), *TEXT_SIZES.end());
+        let size = self.appearance.text_size;
         match zoom {
-            Zoom::In => (self.text_size + TEXT_STEP).min(most),
-            Zoom::Out => self.text_size.saturating_sub(TEXT_STEP).max(least),
+            Zoom::In => (size + TEXT_STEP).min(most),
+            Zoom::Out => size.saturating_sub(TEXT_STEP).max(least),
             Zoom::Reset => TEXT_DEFAULT,
         }
     }
@@ -189,7 +203,7 @@ impl Settings {
     pub fn theme(&self) -> Theme {
         Theme::ALL
             .iter()
-            .find(|theme| theme.to_string() == self.theme)
+            .find(|theme| theme.to_string() == self.appearance.theme)
             .cloned()
             .unwrap_or(Theme::Dark)
     }
@@ -241,7 +255,8 @@ pub enum Message {
     TextSizeDragged(u8),
     TextSizeChosen,
     Zoom(Zoom),
-    Saved(Result<(), String>),
+    /// What was written, or why it could not be.
+    Saved(Result<Settings, String>),
     Dismiss,
 }
 
@@ -249,6 +264,8 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Preferences {
     pub settings: Settings,
+    /// The settings as last read or written, which a save is measured against.
+    base: Settings,
     /// Where changes are written; without one they stay in memory.
     path: Option<PathBuf>,
     /// The text size under the pointer while the slider is held.
@@ -260,8 +277,9 @@ impl Preferences {
     /// Settings from disk; a file that cannot be read leaves the defaults and says why.
     pub fn load() -> Self {
         let path = Settings::path();
-        match Settings::read(&path) {
+        match file::read(&path) {
             Ok(settings) => Self {
+                base: settings.clone(),
                 settings,
                 path: Some(path),
                 dragging: None,
@@ -269,6 +287,7 @@ impl Preferences {
             },
             Err(error) => Self {
                 settings: Settings::default(),
+                base: Settings::default(),
                 path: Some(path),
                 dragging: None,
                 notice: Some(Notice::failure(format!(
@@ -280,25 +299,31 @@ impl Preferences {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Theme(theme) => self.settings.theme = theme.to_string(),
-            Message::StartPage(page) => self.settings.start_page = page,
-            Message::Temperature(temperature) => self.settings.temperature = temperature,
-            Message::Interval(interval) => self.settings.interval = interval,
-            Message::Tray(on) => self.settings.tray = on,
+            Message::Theme(theme) => self.settings.appearance.theme = theme.to_string(),
+            Message::StartPage(page) => self.settings.startup.page = page,
+            Message::Temperature(temperature) => self.settings.units.temperature = temperature,
+            Message::Interval(interval) => self.settings.sampling.interval = interval,
+            Message::Tray(on) => self.settings.startup.tray = on,
             Message::TextSizeDragged(size) => {
                 self.dragging = Some(size);
                 return Task::none();
             }
             Message::TextSizeChosen => {
                 if let Some(size) = self.dragging.take() {
-                    self.settings.text_size = size;
+                    self.settings.appearance.text_size = size;
                 }
             }
-            Message::Zoom(zoom) => self.settings.text_size = self.settings.zoomed(zoom),
+            Message::Zoom(zoom) => self.settings.appearance.text_size = self.settings.zoomed(zoom),
             Message::Saved(result) => {
-                self.notice = result.err().map(|error| {
-                    Notice::failure(format!("The settings could not be saved: {error}"))
-                });
+                self.notice = match result {
+                    Ok(saved) => {
+                        self.base = saved;
+                        None
+                    }
+                    Err(error) => Some(Notice::failure(format!(
+                        "The settings could not be saved: {error}"
+                    ))),
+                };
                 return Task::none();
             }
             Message::Dismiss => {
@@ -311,10 +336,10 @@ impl Preferences {
     }
 
     /// The write a change calls for, or none when there is no file to write to.
-    fn write(&self) -> Option<impl FnOnce() -> Result<(), String> + Send + 'static> {
+    fn write(&self) -> Option<impl FnOnce() -> Result<Settings, String> + Send + 'static> {
         let path = self.path.clone()?;
-        let settings = self.settings.clone();
-        Some(move || settings.save(&path).map_err(|error| error.to_string()))
+        let (ours, base) = (self.settings.clone(), self.base.clone());
+        Some(move || file::write(&path, &ours, &base).map(|()| ours))
     }
 
     /// `tray_error` is why the tray icon is missing when it was asked for.
@@ -329,7 +354,7 @@ impl Preferences {
                 "Start on",
                 pick_list(
                     Page::ALL,
-                    Some(self.settings.start_page),
+                    Some(self.settings.startup.page),
                     Message::StartPage
                 )
                 .width(CONTROL)
@@ -338,7 +363,7 @@ impl Preferences {
                 "Temperatures",
                 pick_list(
                     Temperature::ALL,
-                    Some(self.settings.temperature),
+                    Some(self.settings.units.temperature),
                     Message::Temperature
                 )
                 .width(CONTROL)
@@ -347,7 +372,7 @@ impl Preferences {
                 "Read the machine every",
                 pick_list(
                     Interval::ALL,
-                    Some(self.settings.interval),
+                    Some(self.settings.sampling.interval),
                     Message::Interval
                 )
                 .width(CONTROL)
@@ -357,19 +382,23 @@ impl Preferences {
                 row![
                     slider(
                         TEXT_SIZES,
-                        self.dragging.unwrap_or(self.settings.text_size),
+                        self.dragging.unwrap_or(self.settings.appearance.text_size),
                         Message::TextSizeDragged
                     )
                     .step(TEXT_STEP)
                     .on_release(Message::TextSizeChosen)
                     .width(CONTROL),
-                    text(self.dragging.unwrap_or(self.settings.text_size).to_string()),
+                    text(
+                        self.dragging
+                            .unwrap_or(self.settings.appearance.text_size)
+                            .to_string()
+                    ),
                 ]
                 .spacing(12)
                 .align_y(iced::Center)
             ),
             self.preview(),
-            checkbox(self.settings.tray)
+            checkbox(self.settings.startup.tray)
                 .label("Show a tray icon with the processor and memory load")
                 .on_toggle(Message::Tray),
             text(format!("Saved to {}", Settings::path().display()))
@@ -391,8 +420,8 @@ impl Preferences {
 impl Preferences {
     /// Sample text at the size being chosen, which is drawn in the units of the size in use now.
     fn preview(&self) -> Element<'_, Message> {
-        let ratio = f32::from(self.dragging.unwrap_or(self.settings.text_size))
-            / f32::from(self.settings.text_size);
+        let current = self.settings.appearance.text_size;
+        let ratio = f32::from(self.dragging.unwrap_or(current)) / f32::from(current);
         let size = |base: f32| base * ratio;
         container(
             column![
@@ -424,9 +453,52 @@ fn setting<'a>(
         .into()
 }
 
+/// A directory of its own for one test, removed when the test ends.
+#[cfg(test)]
+struct Scratch(PathBuf);
+
+#[cfg(test)]
+impl Scratch {
+    fn new(test: &str) -> Self {
+        let path = env::temp_dir().join(format!("peepers-{test}-{}", std::process::id()));
+        drop(std::fs::remove_dir_all(&path));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        drop(std::fs::remove_dir_all(&self.0));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+
+    fn text_size(text_size: u8) -> Settings {
+        Settings {
+            appearance: Appearance {
+                text_size,
+                ..Appearance::default()
+            },
+            ..Settings::default()
+        }
+    }
+
+    fn theme(theme: &str) -> Settings {
+        Settings {
+            appearance: Appearance {
+                theme: theme.to_owned(),
+                ..Appearance::default()
+            },
+            ..Settings::default()
+        }
+    }
 
     #[test]
     fn fahrenheit_converts_from_celsius() {
@@ -441,14 +513,7 @@ mod tests {
 
     #[test]
     fn a_text_size_is_moved_onto_a_notch_inside_the_range() {
-        let size = |text_size| {
-            Settings {
-                text_size,
-                ..Settings::default()
-            }
-            .normalised()
-            .text_size
-        };
+        let size = |size| text_size(size).normalised().appearance.text_size;
         assert_eq!(size(0), 12);
         assert_eq!(size(11), 12);
         assert_eq!(size(13), 14);
@@ -460,15 +525,11 @@ mod tests {
 
     #[test]
     fn zooming_steps_the_text_size_and_stops_at_the_ends() {
-        let at = |text_size| Settings {
-            text_size,
-            ..Settings::default()
-        };
-        assert_eq!(at(16).zoomed(Zoom::In), 18);
-        assert_eq!(at(16).zoomed(Zoom::Out), 14);
-        assert_eq!(at(24).zoomed(Zoom::In), 24);
-        assert_eq!(at(12).zoomed(Zoom::Out), 12);
-        assert_eq!(at(22).zoomed(Zoom::Reset), TEXT_DEFAULT);
+        assert_eq!(text_size(16).zoomed(Zoom::In), 18);
+        assert_eq!(text_size(16).zoomed(Zoom::Out), 14);
+        assert_eq!(text_size(24).zoomed(Zoom::In), 24);
+        assert_eq!(text_size(12).zoomed(Zoom::Out), 12);
+        assert_eq!(text_size(22).zoomed(Zoom::Reset), TEXT_DEFAULT);
     }
 
     #[test]
@@ -489,18 +550,12 @@ mod tests {
     }
 
     #[test]
-    fn an_old_file_without_a_text_size_keeps_the_default() {
-        let settings: Settings = serde_json::from_str(r#"{"temperature": "Fahrenheit"}"#).unwrap();
-        assert_eq!(settings.text_size, TEXT_DEFAULT);
-    }
-
-    #[test]
     fn dragging_only_previews_and_letting_go_applies() {
         let mut preferences = Preferences::default();
         drop(preferences.update(Message::TextSizeDragged(22)));
-        assert_eq!(preferences.settings.text_size, TEXT_DEFAULT);
+        assert_eq!(preferences.settings.appearance.text_size, TEXT_DEFAULT);
         drop(preferences.update(Message::TextSizeChosen));
-        assert_eq!(preferences.settings.text_size, 22);
+        assert_eq!(preferences.settings.appearance.text_size, 22);
         assert!(preferences.dragging.is_none());
     }
 
@@ -514,75 +569,41 @@ mod tests {
 
     #[test]
     fn every_theme_name_finds_its_theme_again() {
-        for theme in Theme::ALL {
-            let settings = Settings {
-                theme: theme.to_string(),
-                ..Settings::default()
-            };
-            assert_eq!(&settings.theme(), theme);
+        for name in Theme::ALL {
+            assert_eq!(&theme(&name.to_string()).theme(), name);
         }
     }
 
     #[test]
     fn an_unknown_theme_falls_back_to_dark() {
-        let settings = Settings {
-            theme: "No Such Theme".to_owned(),
-            ..Settings::default()
-        };
-        assert_eq!(settings.theme(), Theme::Dark);
+        assert_eq!(theme("No Such Theme").theme(), Theme::Dark);
     }
 
     #[test]
-    fn a_partial_file_keeps_the_defaults_for_what_it_omits() {
-        let settings: Settings = serde_json::from_str(r#"{"temperature": "Fahrenheit"}"#).unwrap();
-        assert_eq!(settings.temperature, Temperature::Fahrenheit);
-        assert_eq!(settings.start_page, Page::Processes);
-    }
-
-    /// A directory of its own for one test, removed when the test ends.
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(test: &str) -> Self {
-            let path = env::temp_dir().join(format!("peepers-{test}-{}", std::process::id()));
-            drop(fs::remove_dir_all(&path));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            drop(fs::remove_dir_all(&self.0));
+    fn every_page_is_written_under_the_name_the_command_line_uses() {
+        for page in Page::ALL {
+            let text = format!("[startup]\npage = \"{}\"\n", page.slug());
+            let settings: Settings = toml_edit::de::from_str(&text).unwrap();
+            assert_eq!(settings.startup.page, page);
         }
     }
 
     #[test]
-    fn saved_settings_are_read_back_from_the_file() {
-        let scratch = Scratch::new("settings-saved");
-        let path = scratch.0.join("peepers/settings.json");
-        let settings = Settings {
-            theme: Theme::Oxocarbon.to_string(),
-            start_page: Page::Performance,
-            temperature: Temperature::Fahrenheit,
-            ..Settings::default()
-        };
-        settings.save(&path).unwrap();
-        assert_eq!(Settings::read(&path), Ok(settings));
-    }
-
-    #[test]
-    fn saving_again_replaces_the_file_and_leaves_nothing_beside_it() {
-        let scratch = Scratch::new("settings-replaced");
-        let path = scratch.0.join("settings.json");
-        Settings::default().save(&path).unwrap();
-        let later = Settings {
-            interval: Interval::FiveSeconds,
-            ..Settings::default()
-        };
-        later.save(&path).unwrap();
-        assert_eq!(Settings::read(&path), Ok(later));
-        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1);
+    fn every_interval_is_written_the_way_it_is_typed() {
+        let spellings = [
+            ("100ms", Interval::Millis100),
+            ("250ms", Interval::Millis250),
+            ("500ms", Interval::Millis500),
+            ("1s", Interval::Second),
+            ("2s", Interval::TwoSeconds),
+            ("5s", Interval::FiveSeconds),
+        ];
+        assert_eq!(spellings.len(), Interval::ALL.len());
+        for (spelling, interval) in spellings {
+            let text = format!("[sampling]\ninterval = \"{spelling}\"\n");
+            let settings: Settings = toml_edit::de::from_str(&text).unwrap();
+            assert_eq!(settings.sampling.interval, interval);
+        }
     }
 
     #[test]
@@ -594,29 +615,69 @@ mod tests {
     #[test]
     fn a_change_is_written_to_the_file_the_settings_belong_to() {
         let scratch = Scratch::new("settings-written");
-        let path = scratch.0.join("settings.json");
-        let settings = Settings {
-            tray: false,
-            ..Settings::default()
-        };
-        let preferences = Preferences {
-            settings: settings.clone(),
+        let path = scratch.0.join("settings.toml");
+        let mut preferences = Preferences {
             path: Some(path.clone()),
             ..Preferences::default()
         };
+        preferences.settings.startup.tray = false;
         preferences.write().unwrap()().unwrap();
-        assert_eq!(Settings::read(&path), Ok(settings));
+        assert_eq!(file::read(&path), Ok(preferences.settings));
+    }
+
+    /// What a task sends back when it is run to the end, as the application would receive it.
+    fn messages_of(task: Task<Message>) -> Vec<Message> {
+        let actions = iced_runtime::task::into_stream(task).expect("the change has a task to run");
+        smol::block_on(smol::stream::StreamExt::collect::<Vec<_>>(actions))
+            .into_iter()
+            .filter_map(|action| match action {
+                iced_runtime::Action::Output(message) => Some(message),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
-    fn settings_round_trip_through_json() {
-        let settings = Settings {
-            start_page: Page::Pressure,
-            interval: Interval::FiveSeconds,
-            ..Settings::default()
+    fn a_change_made_in_the_window_reaches_the_file_with_its_comments_around_it() {
+        let scratch = Scratch::new("settings-window");
+        let path = scratch.0.join("settings.toml");
+        let before = "# mine\n\n[appearance]\n# bigger\ntext_size = 16 # the default\n\n[alerts]\nrule = []\n";
+        fs::write(&path, before).unwrap();
+        let settings = file::read(&path).unwrap();
+        let mut preferences = Preferences {
+            base: settings.clone(),
+            settings,
+            path: Some(path.clone()),
+            ..Preferences::default()
         };
-        let again: Settings =
-            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
-        assert_eq!(again, settings);
+        let task = preferences.update(Message::Zoom(Zoom::In));
+        for message in messages_of(task) {
+            drop(preferences.update(message));
+        }
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            before.replace("= 16", "= 18")
+        );
+        assert_eq!(preferences.base, preferences.settings);
+        assert!(preferences.notice.is_none());
+    }
+
+    #[test]
+    fn once_saved_only_what_changed_since_is_written_again() {
+        let scratch = Scratch::new("settings-measured");
+        let path = scratch.0.join("settings.toml");
+        let mut preferences = Preferences {
+            path: Some(path.clone()),
+            ..Preferences::default()
+        };
+        preferences.settings.startup.tray = false;
+        let saved = preferences.write().unwrap()().unwrap();
+        drop(preferences.update(Message::Saved(Ok(saved))));
+        fs::write(&path, "[startup]\ntray = true\n").unwrap();
+        preferences.settings.units.temperature = Temperature::Fahrenheit;
+        preferences.write().unwrap()().unwrap();
+        let after = file::read(&path).unwrap();
+        assert!(after.startup.tray);
+        assert_eq!(after.units.temperature, Temperature::Fahrenheit);
     }
 }
