@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
@@ -137,12 +137,8 @@ impl Settings {
     }
 
     /// A missing file is the defaults; a file that cannot be understood is an error.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the file exists but cannot be read or parsed.
-    pub fn load() -> Result<Self, String> {
-        match fs::read_to_string(Self::path()) {
+    fn read(path: &Path) -> Result<Self, String> {
+        match fs::read_to_string(path) {
             Ok(text) => serde_json::from_str(&text)
                 .map(Self::normalised)
                 .map_err(|error| error.to_string()),
@@ -152,8 +148,7 @@ impl Settings {
     }
 
     /// Replaces the file in one step.
-    fn save(&self) -> io::Result<()> {
-        let path = Self::path();
+    fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(directory) = path.parent() {
             fs::create_dir_all(directory)?;
         }
@@ -254,6 +249,8 @@ pub enum Message {
 #[derive(Debug, Default)]
 pub struct Preferences {
     pub settings: Settings,
+    /// Where changes are written; without one they stay in memory.
+    path: Option<PathBuf>,
     /// The text size under the pointer while the slider is held.
     dragging: Option<u8>,
     notice: Option<Notice>,
@@ -262,14 +259,17 @@ pub struct Preferences {
 impl Preferences {
     /// Settings from disk; a file that cannot be read leaves the defaults and says why.
     pub fn load() -> Self {
-        match Settings::load() {
+        let path = Settings::path();
+        match Settings::read(&path) {
             Ok(settings) => Self {
                 settings,
+                path: Some(path),
                 dragging: None,
                 notice: None,
             },
             Err(error) => Self {
                 settings: Settings::default(),
+                path: Some(path),
                 dragging: None,
                 notice: Some(Notice::failure(format!(
                     "The settings file could not be read, so the defaults are in use: {error}"
@@ -306,9 +306,15 @@ impl Preferences {
                 return Task::none();
             }
         }
+        self.write()
+            .map_or_else(Task::none, |write| blocking::run(write).map(Message::Saved))
+    }
+
+    /// The write a change calls for, or none when there is no file to write to.
+    fn write(&self) -> Option<impl FnOnce() -> Result<(), String> + Send + 'static> {
+        let path = self.path.clone()?;
         let settings = self.settings.clone();
-        blocking::run(move || settings.save().map_err(|error| error.to_string()))
-            .map(Message::Saved)
+        Some(move || settings.save(&path).map_err(|error| error.to_string()))
     }
 
     /// `tray_error` is why the tray icon is missing when it was asked for.
@@ -531,6 +537,75 @@ mod tests {
         let settings: Settings = serde_json::from_str(r#"{"temperature": "Fahrenheit"}"#).unwrap();
         assert_eq!(settings.temperature, Temperature::Fahrenheit);
         assert_eq!(settings.start_page, Page::Processes);
+    }
+
+    /// A directory of its own for one test, removed when the test ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(test: &str) -> Self {
+            let path = env::temp_dir().join(format!("peepers-{test}-{}", std::process::id()));
+            drop(fs::remove_dir_all(&path));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            drop(fs::remove_dir_all(&self.0));
+        }
+    }
+
+    #[test]
+    fn saved_settings_are_read_back_from_the_file() {
+        let scratch = Scratch::new("settings-saved");
+        let path = scratch.0.join("peepers/settings.json");
+        let settings = Settings {
+            theme: Theme::Oxocarbon.to_string(),
+            start_page: Page::Performance,
+            temperature: Temperature::Fahrenheit,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::read(&path), Ok(settings));
+    }
+
+    #[test]
+    fn saving_again_replaces_the_file_and_leaves_nothing_beside_it() {
+        let scratch = Scratch::new("settings-replaced");
+        let path = scratch.0.join("settings.json");
+        Settings::default().save(&path).unwrap();
+        let later = Settings {
+            interval: Interval::FiveSeconds,
+            ..Settings::default()
+        };
+        later.save(&path).unwrap();
+        assert_eq!(Settings::read(&path), Ok(later));
+        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_change_with_no_file_to_write_to_is_not_saved() {
+        let mut preferences = Preferences::default();
+        assert_eq!(preferences.update(Message::Tray(false)).units(), 0);
+    }
+
+    #[test]
+    fn a_change_is_written_to_the_file_the_settings_belong_to() {
+        let scratch = Scratch::new("settings-written");
+        let path = scratch.0.join("settings.json");
+        let settings = Settings {
+            tray: false,
+            ..Settings::default()
+        };
+        let preferences = Preferences {
+            settings: settings.clone(),
+            path: Some(path.clone()),
+            ..Preferences::default()
+        };
+        preferences.write().unwrap()().unwrap();
+        assert_eq!(Settings::read(&path), Ok(settings));
     }
 
     #[test]
