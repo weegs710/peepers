@@ -37,6 +37,18 @@ pub fn view<'a, Message: 'a>(
         ("In use", format::bytes(memory.used())),
         ("Available", format::bytes(memory.available)),
         ("Cached", format::bytes(memory.cached)),
+    ];
+    facts.extend(memory.zfs_cache.map(|cache| {
+        (
+            "ZFS cache",
+            format!(
+                "{}, {} evictable",
+                format::bytes(cache.size),
+                format::bytes(cache.evictable)
+            ),
+        )
+    }));
+    facts.extend([
         ("Free", format::bytes(memory.free)),
         ("Shared", format::bytes(memory.shared)),
         ("Kernel slab", format::bytes(memory.slab)),
@@ -53,7 +65,7 @@ pub fn view<'a, Message: 'a>(
             "Pages in / out",
             format!("{} / {}", memory.pages_in, memory.pages_out),
         ),
-    ];
+    ]);
     if memory.swap_total > 0 {
         facts.push((
             "Swap in use",
