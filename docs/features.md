@@ -27,6 +27,8 @@ A box at the top runs a command you type.
 
 One card for each device: the processor, memory, each disk, each graphics adapter and each network interface. A disk's card shows its health as last read, or why it could not be read. The cards rearrange to fit the width of the window.
 
+Where ZFS is loaded, the part of its cache that it can evict counts as available memory and not as memory in use. The memory page shows the size of the cache and how much of it can be evicted.
+
 ### Pressure
 
 How long tasks spend stalled waiting for the processor, for memory and for I/O, from the kernel's pressure stall information. Each resource has a one-sentence summary of what the machine is waiting for, and a list of the heaviest processes. In the I/O list, processes blocked on the disk come first and then the busiest, because blocked processes are what a storage stall is made of. Select a process to see its details below the lists.

@@ -12,7 +12,7 @@ peepers has been built and run on NixOS under the Umbriel compositor, and on no 
 | user names                                               | `/etc/passwd`, and the sockets in `/run/systemd/userdb` for the accounts systemd makes for services. See [Sensitive reads](#sensitive-reads) |
 | uptime and load                                          | `/proc/uptime`, `/proc/loadavg`             |
 | processors                                               | `/proc/cpuinfo`, `/sys/devices/system/cpu`, `/sys/devices/system/node` |
-| memory and swap                                          | `/proc/meminfo`, `/proc/vmstat`             |
+| memory and swap                                          | `/proc/meminfo`, `/proc/vmstat`, and `/proc/spl/kstat/zfs/arcstats` where ZFS is loaded |
 | pressure stall information                               | `/proc/pressure/cpu`, `memory` and `io`     |
 | disks                                                    | `/proc/diskstats`, `/sys/block`             |
 | network interfaces                                       | `/proc/net/dev`, `/proc/net/wireless`, `/sys/class/net` |
