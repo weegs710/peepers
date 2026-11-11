@@ -335,25 +335,28 @@ mod tests {
 
     #[test]
     fn the_live_tables_parse_without_losing_lines() {
-        let connections = read().unwrap();
-        let tcp_lines: usize = ["tcp", "tcp6"]
-            .iter()
-            .map(|file| {
-                fs::read_to_string(format!("/proc/net/{file}"))
-                    .unwrap()
-                    .lines()
-                    .count()
-                    - 1
-            })
-            .sum();
-        assert!(
-            connections
-                .iter()
-                .filter(|c| c.protocol == Protocol::Tcp)
-                .count()
-                .abs_diff(tcp_lines)
-                <= 2
-        );
+        // Parse the same snapshot we check: sockets can change between reads.
+        for (file, protocol) in [
+            ("tcp", Protocol::Tcp),
+            ("tcp6", Protocol::Tcp),
+            ("udp", Protocol::Udp),
+            ("udp6", Protocol::Udp),
+        ] {
+            let table = fs::read_to_string(format!("/proc/net/{file}")).unwrap();
+            for line in table.lines().skip(1) {
+                assert!(
+                    parse_inet(protocol, line).is_some(),
+                    "failed to parse /proc/net/{file} row: {line}"
+                );
+            }
+        }
+        let unix = fs::read_to_string("/proc/net/unix").unwrap();
+        for line in unix.lines().skip(1) {
+            assert!(
+                parse_unix(line).is_some(),
+                "failed to parse /proc/net/unix row: {line}"
+            );
+        }
     }
 
     #[test]
