@@ -80,8 +80,8 @@ pub struct Process {
 
 #[derive(Debug, Default)]
 pub struct Sampler {
-    ticks: HashMap<u32, u64>,
-    moved: HashMap<u32, u64>,
+    ticks: HashMap<(u32, u64), u64>,
+    moved: HashMap<(u32, u64), u64>,
     total: u64,
     at: Option<Instant>,
 }
@@ -122,22 +122,24 @@ impl Sampler {
         let processes = fs::read_dir("/proc")?
             .filter_map(|entry| read(&entry.ok()?))
             .map(|(reading, uid)| {
-                ticks.insert(reading.pid, reading.ticks);
+                let identity = (reading.pid, reading.started);
+                ticks.insert(identity, reading.ticks);
                 if let Some(bytes) = reading.moved {
-                    moved.insert(reading.pid, bytes);
+                    moved.insert(identity, bytes);
                 }
                 Process {
-                    cpu: self.ticks.get(&reading.pid).map_or(0.0, |&before| {
+                    cpu: self.ticks.get(&identity).map_or(0.0, |&before| {
                         percent(reading.ticks.saturating_sub(before), elapsed)
                     }),
-                    io: match (millis, reading.moved, self.moved.get(&reading.pid)) {
+                    io: match (millis, reading.moved, self.moved.get(&identity)) {
                         (Some(millis), Some(now), Some(&before)) => {
                             Some(now.saturating_sub(before).saturating_mul(1000) / millis)
                         }
                         _ => None,
                     },
                     memory: reading.pages * page,
-                    started: Duration::from_secs(reading.started / hertz),
+                    started: Duration::from_secs(reading.started / hertz)
+                        + Duration::from_nanos((reading.started % hertz) * 1_000_000_000 / hertz),
                     pid: reading.pid,
                     parent: reading.parent,
                     name: reading.name,

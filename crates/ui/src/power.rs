@@ -66,11 +66,21 @@ fn is_network(model: &str) -> bool {
         .any(|word| model.contains(word))
 }
 
-pub fn view<'a, Message: 'a>(history: &'a History, unit: Temperature) -> Element<'a, Message> {
+pub fn view<'a, Message: 'a>(
+    history: &'a History,
+    unit: Temperature,
+    energy: Element<'a, Message>,
+) -> Element<'a, Message> {
     let Some(latest) = history.latest() else {
-        return container(text("Waiting for the first sample").style(text::secondary))
-            .center(Fill)
-            .into();
+        return scrollable(
+            column![
+                energy,
+                text("Waiting for live sensor readings").style(text::secondary)
+            ]
+            .spacing(24)
+            .padding(16),
+        )
+        .into();
     };
     let groups = Group::ALL.into_iter().filter_map(|group| {
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
@@ -96,10 +106,19 @@ pub fn view<'a, Message: 'a>(history: &'a History, unit: Temperature) -> Element
         }
         (!parts.is_empty()).then(|| header(group, parts))
     });
-    scrollable(column(groups).spacing(32).padding(16))
-        .width(Fill)
-        .height(Fill)
-        .into()
+    scrollable(
+        column![
+            energy,
+            rule::horizontal(2),
+            text("Live sensors").size(28),
+            column(groups).spacing(32)
+        ]
+        .spacing(24)
+        .padding(16),
+    )
+    .width(Fill)
+    .height(Fill)
+    .into()
 }
 
 /// A group's name, set apart so it can be found in a long page, over what it holds.

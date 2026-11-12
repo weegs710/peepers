@@ -44,6 +44,8 @@ A page with readings of its own loads them when it is entered and keeps them cur
 
 A sample feeds the flight recorder and the tray icon whether or not a window is open. The pages' history takes a sample only while a window is open and the numbers are not paused.
 
+The sampling thread also owns `energy::Collector`. It accounts for each successful sample before sending it to the interface, keeps hourly aggregates, and checkpoints them to the XDG state directory. A stable subscription control changes sampling cadence and report range without restarting the thread. Energy reports reach the UI every ten seconds or on a range change. The collector tracks monotonic time, wall time and uptime to leave gaps across failures, suspend and clock changes. Shutdown waits for a checkpoint; failed saves are visible and offer a retry or explicit discard. See [Energy history](./energy.md) for attribution, retention and permissions.
+
 ### Windows
 
 `Windows` keeps the main window and the popout. Each has its own application id, `peepers` and `peepers-popout`, which is what a compositor rule matches on. Closing a window destroys it, and opening it again creates a new one. A window that is open without the focus is closed and reopened when it is asked to come forward, because asking an existing window to take the focus had no effect under Umbriel.

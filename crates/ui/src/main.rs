@@ -4,6 +4,7 @@ mod blocking;
 mod connections;
 mod disk_space;
 mod drivers;
+mod energy;
 mod flight;
 mod format;
 mod gpu_bench;
@@ -140,6 +141,8 @@ fn main() -> iced::Result {
 struct Peepers {
     page: Page,
     history: History,
+    energy: energy::Energy,
+    collector: telemetry::Control,
     failure: Option<ErrorKind>,
     processes: Processes,
     performance: Performance,
@@ -295,6 +298,9 @@ impl fmt::Display for Page {
 
 #[derive(Debug, Clone)]
 enum Message {
+    Energy(energy::Message),
+    EnergyFlushed(Result<(), String>),
+    QuitWithoutEnergySave,
     Sampled(Arc<Sample>),
     Failed(ErrorKind),
     Navigate(Page),
@@ -399,10 +405,31 @@ impl Peepers {
             }
             (Some(Fate::Discard), true) => {
                 self.flight.discard();
-                iced::exit()
+                self.finish()
             }
-            (_, false) => iced::exit(),
+            (_, false) => self.finish(),
         }
+    }
+
+    fn energy_flushed(&mut self, result: Result<(), String>) -> Task<Message> {
+        self.energy.saving = false;
+        match result {
+            Ok(()) => iced::exit(),
+            Err(error) => {
+                self.energy.save_error = Some(error);
+                self.page = Page::Power;
+                self.windows.main.reveal()
+            }
+        }
+    }
+
+    fn finish(&mut self) -> Task<Message> {
+        if self.energy.saving {
+            return Task::none();
+        }
+        self.energy.saving = true;
+        let collector = self.collector.clone();
+        blocking::run(move || collector.flush()).map(Message::EnergyFlushed)
     }
 
     /// Carries out what another process asked for.
@@ -438,21 +465,31 @@ impl Peepers {
         }
     }
 
+    fn on_sample(&mut self, sample: Arc<Sample>) {
+        self.failure = None;
+        self.flight.record(&sample.vitals);
+        self.tray.show(Gauges::from(&sample.vitals));
+        let main = self.windows.main.is_open();
+        if !self.paused && (main || self.windows.popout.is_open()) {
+            if main {
+                self.processes.replace(&sample);
+            }
+            self.history.push(sample.vitals.clone());
+        }
+        self.latest = Some(sample);
+    }
+
     fn apply(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Sampled(sample) => {
-                self.failure = None;
-                self.flight.record(&sample.vitals);
-                self.tray.show(Gauges::from(&sample.vitals));
-                let main = self.windows.main.is_open();
-                if !self.paused && (main || self.windows.popout.is_open()) {
-                    if main {
-                        self.processes.replace(&sample);
-                    }
-                    self.history.push(sample.vitals.clone());
+            Message::Energy(message) => {
+                if let energy::Message::Range(range) = &message {
+                    self.collector.range(range.hours());
                 }
-                self.latest = Some(sample);
+                self.energy.update(message);
             }
+            Message::EnergyFlushed(result) => return self.energy_flushed(result),
+            Message::QuitWithoutEnergySave => return iced::exit(),
+            Message::Sampled(sample) => self.on_sample(sample),
             Message::Failed(kind) => self.failure = Some(kind),
             Message::TogglePause => self.set_paused(!self.paused),
             Message::TogglePopout => return self.popout(Window::toggle),
@@ -486,7 +523,7 @@ impl Peepers {
                     && let flight::Message::Saved(result) = &message
                 {
                     if result.is_ok() {
-                        return iced::exit();
+                        return self.finish();
                     }
                     self.quitting = false;
                 }
@@ -527,7 +564,6 @@ impl Peepers {
                 if let window::Event::CloseRequested(id) = event
                     && self.windows.main.owns(id)
                     && !self.tray.is_active()
-                    && self.flight.is_recording()
                 {
                     return self.quit(None);
                 }
@@ -594,13 +630,37 @@ impl Peepers {
         let interval = self.preferences.settings.sampling.interval.duration();
         Subscription::batch([
             fade,
-            telemetry::subscription(interval),
+            telemetry::subscription(&self.collector, interval),
             window::events().map(Message::Window),
             settings::keys().map(Message::Settings),
             self.door.subscription().map(Message::Ipc),
             self.tray.subscription().map(Message::Tray),
             page,
         ])
+    }
+
+    fn power_view(&self) -> Element<'_, Message> {
+        let mut energy = column![self.energy.view().map(Message::Energy)].spacing(12);
+        if let Some(error) = &self.energy.save_error {
+            energy = column![
+                text(format!(
+                    "Could not save energy history before quitting: {error}"
+                ))
+                .style(text::danger),
+                row![
+                    button("Retry saving and quit").on_press(Message::Quit(None)),
+                    button("Quit without saving energy").on_press(Message::QuitWithoutEnergySave)
+                ]
+                .spacing(12),
+                energy,
+            ]
+            .spacing(12);
+        }
+        power::view(
+            &self.history,
+            self.preferences.settings.units.temperature,
+            energy.into(),
+        )
     }
 
     fn view(&self, window: iced::window::Id) -> Element<'_, Message> {
@@ -667,7 +727,7 @@ impl Peepers {
             Page::Pressure => {
                 pressure::view(&self.history, &self.processes).map(Message::Processes)
             }
-            Page::Power => power::view(&self.history, self.preferences.settings.units.temperature),
+            Page::Power => self.power_view(),
             Page::Flight => self.flight.view().map(Message::Flight),
             Page::Benchmarks => self
                 .benchmarks

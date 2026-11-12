@@ -32,6 +32,7 @@ $ peepers --flight start          # start a flight recording, no window needed
 The popout is a second, narrow window of the same live gauges that stays beside the work. It has its own application id, `peepers-popout`, so a compositor rule can float and place it. The main window's is `peepers`.
 
 **Documentation:** [Features](./docs/features.md) ·
+[Energy history](./docs/energy.md) ·
 [Controlling a running peepers](./docs/control.md) ·
 [The settings file](./docs/settings.md) ·
 [Architecture](./docs/architecture.md) ·

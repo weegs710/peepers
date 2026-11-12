@@ -58,6 +58,155 @@ fn click(app: &mut Peepers, target: &str) {
     }
 }
 
+fn energy_report() -> peepers_core::energy::Report {
+    use peepers_core::energy::{Bucket, Entity, Kind, Metrics, Report, Row};
+    let rows = vec![
+        Row {
+            entity: Entity {
+                id: "cpu-packages".into(),
+                name: "CPU packages (combined)".into(),
+                kind: Kind::Hardware,
+            },
+            metrics: Metrics {
+                joules: 3600.0,
+                measured_seconds: 600.0,
+                observed_seconds: 900.0,
+                active_seconds: 600.0,
+                bursts: 1,
+                peak_watts: Some(12.0),
+            },
+        },
+        Row {
+            entity: Entity {
+                id: "app/browser".into(),
+                name: "Browser (uid 1000)".into(),
+                kind: Kind::Application,
+            },
+            metrics: Metrics {
+                joules: 900.0,
+                measured_seconds: 600.0,
+                observed_seconds: 900.0,
+                active_seconds: 120.0,
+                bursts: 8,
+                peak_watts: Some(4.0),
+            },
+        },
+    ];
+    Report {
+        hours: 24,
+        start: 1_799_884_800,
+        end: 1_799_971_199,
+        observed_seconds: 900.0,
+        periods: (0..24)
+            .map(|hour| Bucket {
+                start: 1_799_884_800 + hour * 3600,
+                through: 0.0,
+                observed_seconds: if hour == 23 { 900.0 } else { 0.0 },
+                rows: if hour == 23 {
+                    rows.iter()
+                        .map(|r| (r.entity.id.clone(), r.clone()))
+                        .collect()
+                } else {
+                    std::collections::BTreeMap::default()
+                },
+            })
+            .collect(),
+        rows,
+        directory: Some("/home/example/.local/state/peepers/energy".into()),
+        warning: None,
+        status: "Collecting · CPU estimates use each group's share of total CPU capacity".into(),
+    }
+}
+
+#[test]
+fn energy_history_updates_while_hidden_and_paused_and_can_change_range() {
+    let mut app = Peepers::default();
+    update(&mut app, Message::TogglePause);
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
+    );
+    update(&mut app, Message::Navigate(Page::Power));
+    assert!(ui(&app).find("Energy history").is_ok());
+    assert!(ui(&app).find("Browser (uid 1000)").is_ok());
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Range(energy::Range::Week)),
+    );
+    assert!(ui(&app).find("Loading selected range…").is_ok());
+    let mut report = energy_report();
+    report.hours = 168;
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Reported(Arc::new(report))),
+    );
+    assert!(
+        ui(&app)
+            .find("Energy per UTC day · oldest → newest")
+            .is_ok()
+    );
+}
+
+#[test]
+fn energy_history_selection_filter_and_save_failures_are_visible() {
+    let mut app = Peepers::default();
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
+    );
+    update(&mut app, Message::Navigate(Page::Power));
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Select("app/browser".into())),
+    );
+    assert!(
+        ui(&app)
+            .find(
+                "0.250 Wh · 10.0 min available / 15.0 min observed · average 1.50 W · peak 4.00 W"
+            )
+            .is_ok()
+    );
+    click(&mut app, "Activity timeline");
+    assert!(
+        ui(&app)
+            .find("Activity per UTC hour · oldest → newest")
+            .is_ok()
+    );
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Filter("no matching application".into())),
+    );
+    assert!(ui(&app).find("No matching readings in this range").is_ok());
+    assert_eq!(app.update(Message::Quit(None)).units(), 1);
+    assert!(app.energy.saving);
+    update(&mut app, Message::EnergyFlushed(Err("disk full".into())));
+    assert!(!app.energy.saving);
+    assert!(ui(&app).find("Quit without saving energy").is_ok());
+    assert_eq!(app.update(Message::EnergyFlushed(Ok(()))).units(), 1);
+}
+
+#[test]
+#[ignore = "renders PNGs for visual review; set PEEPERS_SHOTS to an empty directory"]
+fn render_energy_history() {
+    let directory = std::env::var("PEEPERS_SHOTS").unwrap();
+    let mut app = Peepers::default();
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
+    );
+    update(&mut app, Message::Navigate(Page::Power));
+    for width in [1280.0, 992.0] {
+        let snapshot = ui_sized(&app, Size::new(width, 1000.0))
+            .snapshot(&Theme::Dark)
+            .unwrap();
+        assert!(
+            snapshot
+                .matches_image(format!("{directory}/Energy-{width}"))
+                .unwrap()
+        );
+    }
+}
+
 #[test]
 fn the_sections_hold_every_page_once_in_the_order_of_the_full_list() {
     let shown: Vec<Page> = Page::SECTIONS
@@ -396,6 +545,16 @@ fn closing_the_last_window_with_a_recording_running_asks_first() {
     let id = app.windows.main.id().unwrap();
     update(&mut app, Message::Window(window::Event::CloseRequested(id)));
     assert!(app.asking_to_quit);
+}
+
+#[test]
+fn closing_the_last_window_waits_for_energy_to_be_saved() {
+    let mut app = Peepers::default();
+    drop(app.windows.main.open::<Message>());
+    let id = app.windows.main.id().unwrap();
+    update(&mut app, Message::Window(window::Event::CloseRequested(id)));
+    assert!(app.energy.saving);
+    assert!(!app.asking_to_quit);
 }
 
 #[test]

@@ -20,6 +20,7 @@ peepers has been built and run on NixOS under the Umbriel compositor, and on no 
 | graphics adapters                                        | `/sys/class/drm`, and the DRM clients' fdinfo under `/proc` |
 | sensors                                                  | `/sys/class/hwmon`                          |
 | package power                                            | `/sys/class/powercap`                       |
+| energy history and battery discharge                     | powercap, hwmon, `/sys/class/power_supply`, process CPU counters and cgroups; persisted in the XDG state directory |
 | PCI device names                                         | the udev database in `/run/udev/data`       |
 | mounted volumes                                          | `/proc/self/mountinfo`                      |
 | kernel modules                                           | `/proc/modules`, `/sys/module`, and the module metadata under `/lib/modules/<release>` |

@@ -4,6 +4,7 @@ pub mod connections;
 pub mod cpu;
 pub mod disk;
 pub mod drivers;
+pub mod energy;
 pub mod format;
 pub mod gpu;
 pub mod health;
