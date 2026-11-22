@@ -163,8 +163,8 @@ fn grouping_handles_services_app_instances_and_executable_fallbacks() {
         "0::/user.slice/user@1000.service/session.scope",
     );
     assert_eq!(fallback.kind, Kind::Application);
-    assert!(fallback.id.ends_with("/opt/bin/application"));
-    assert_ne!(
+    assert_eq!(fallback.id, "application/application");
+    assert_eq!(
         fallback.id,
         group(1001, "short", Some(Path::new("/opt/bin/application")), "").id
     );
@@ -305,4 +305,118 @@ fn small_wall_clock_adjustments_do_not_scale_measured_energy() {
         .metrics;
     assert_eq!(cpu.joules, 100.0);
     assert_eq!(cpu.measured_seconds, 1.0);
+}
+
+#[test]
+fn launch_ids_and_executable_versions_share_one_application() {
+    use attribution::group;
+    use std::path::Path;
+    let expected = group(1000, "umbriel", None, "");
+    for scope in [
+        "app-umbriel-1306-2.scope",
+        "app-umbriel-4788-abcdef123456.scope",
+        "app-umbriel-1297.scope",
+        "app-umbriel@123.service",
+    ] {
+        assert_eq!(
+            group(1000, "worker", None, &format!("0::/app.slice/{scope}")),
+            expected
+        );
+    }
+    for executable in ["/nix/store/old/bin/umbriel", "/nix/store/new/bin/umbriel"] {
+        assert_eq!(
+            group(1000, "umbriel", Some(Path::new(executable)), ""),
+            expected
+        );
+    }
+    assert_eq!(group(0, "umbriel", None, "").id, expected.id);
+    assert_ne!(group(1000, "other", None, "").id, expected.id);
+}
+
+#[test]
+fn simultaneous_processes_and_restarts_record_one_group_interval() {
+    let mut sample = sample();
+    sample.processes[0].name = "umbriel".into();
+    let mut second = sample.processes[0].clone();
+    second.pid -= 1;
+    second.uid = 30001;
+    sample.processes.push(second);
+    let mut attributor = attribution::Attributor::default();
+    let directory = Directory::new();
+    let mut store = Store::open(&directory.0, 100);
+    let readings = attributor.attribute(&sample, Some(100.0));
+    store.record(10.0, 20.0, &readings, &BTreeSet::new());
+    let active = readings
+        .iter()
+        .filter(|r| r.active)
+        .map(|r| r.entity.id.clone())
+        .collect();
+    sample.processes.remove(0);
+    sample.processes[0].pid -= 1;
+    let readings = attributor.attribute(&sample, Some(100.0));
+    store.record(20.0, 30.0, &readings, &active);
+    store.flush().unwrap();
+    drop(store);
+    let report = Store::open(&directory.0, 100).report(24, 100);
+    let apps: Vec<_> = report
+        .rows
+        .iter()
+        .filter(|r| r.entity.kind == Kind::Application)
+        .collect();
+    assert_eq!(apps.len(), 1);
+    let metrics = &apps[0].metrics;
+    assert_eq!(metrics.joules, 750.0);
+    assert_eq!(metrics.measured_seconds, 20.0);
+    assert_eq!(metrics.observed_seconds, 20.0);
+    assert_eq!(metrics.active_seconds, 20.0);
+    assert_eq!(metrics.average_watts(), Some(37.5));
+    assert_eq!(metrics.peak_watts, Some(50.0));
+    assert_eq!(metrics.bursts, 1);
+    assert!(report.warning.is_none());
+}
+
+#[test]
+fn saved_launch_entries_combine_in_rankings_and_timelines_without_rewriting_history() {
+    let directory = Directory::new();
+    let mut store = Store::open(&directory.0, 7200);
+    let observations: Vec<_> = [
+        "app/1000/umbriel-1306",
+        "app/30001/umbriel-4788",
+        "exe/1000//nix/store/old/bin/umbriel",
+        "application/umbriel",
+    ]
+    .into_iter()
+    .map(|id| Observation {
+        entity: Entity::new(id, "old label", Kind::Application),
+        watts: Some(10.0),
+        active: true,
+    })
+    .collect();
+    store.record(3590.0, 3610.0, &observations, &BTreeSet::new());
+    store.flush().unwrap();
+    drop(store);
+    let original = fs::read(directory.0.join("0.json")).unwrap();
+    let store = Store::open(&directory.0, 7200);
+    for hours in [24, 7 * 24, 30 * 24, 90 * 24] {
+        let report = store.report(hours, 7200);
+        assert_eq!(report.rows.len(), 1);
+        let row = &report.rows[0];
+        assert_eq!(row.entity.id, "application/umbriel");
+        assert_eq!(row.entity.name, "umbriel");
+        assert_eq!(row.metrics.joules, 800.0);
+        assert_eq!(row.metrics.observed_seconds, 20.0);
+        assert_eq!(row.metrics.measured_seconds, 20.0);
+        assert_eq!(row.metrics.active_seconds, 20.0);
+        assert_eq!(
+            report
+                .periods
+                .iter()
+                .filter_map(|p| p.rows.get(&row.entity.id))
+                .map(|r| r.metrics.joules)
+                .sum::<f64>(),
+            800.0
+        );
+        assert!(report.warning.unwrap().contains("overlap timing"));
+    }
+    assert_eq!(fs::read(directory.0.join("0.json")).unwrap(), original);
 }

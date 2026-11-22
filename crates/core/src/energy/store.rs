@@ -265,12 +265,29 @@ impl Store {
         for time in (start / step * step..=now).step_by(usize::try_from(step).unwrap_or(3600)) {
             periods.insert(time, Bucket::new(time));
         }
+        let mut combined_legacy = false;
         for (_, bucket) in self.buckets.range(start..=now) {
             total.observed_seconds += bucket.observed_seconds;
             let time = bucket.start / step * step;
             let period = periods.entry(time).or_insert_with(|| Bucket::new(time));
             period.observed_seconds += bucket.observed_seconds;
+            let mut grouped = Bucket::new(bucket.start);
             for row in bucket.rows.values() {
+                let entity = super::attribution::report_entity(&row.entity);
+                combined_legacy |= grouped.rows.contains_key(&entity.id);
+                grouped.add(&entity, &row.metrics);
+            }
+            for row in grouped.rows.values_mut() {
+                // Old hourly aggregates do not retain overlap timing. Preserve all energy,
+                // but bound summed coverage/activity by the actual recorded interval.
+                row.metrics.observed_seconds =
+                    row.metrics.observed_seconds.min(bucket.observed_seconds);
+                row.metrics.measured_seconds = row
+                    .metrics
+                    .measured_seconds
+                    .min(row.metrics.observed_seconds);
+                row.metrics.active_seconds =
+                    row.metrics.active_seconds.min(row.metrics.observed_seconds);
                 total.add(&row.entity, &row.metrics);
                 period.add(&row.entity, &row.metrics);
             }
@@ -289,6 +306,9 @@ impl Store {
         });
         let mut warnings = self.warnings.clone();
         warnings.extend(self.write_error.clone());
+        if combined_legacy {
+            warnings.push("Older application entries were combined. Energy totals are preserved; coverage, activity, averages, peaks and bursts may be approximate because hourly history does not retain overlap timing.".into());
+        }
         Report {
             hours,
             start,

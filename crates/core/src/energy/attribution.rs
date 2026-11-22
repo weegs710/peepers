@@ -130,11 +130,7 @@ pub(super) fn group(uid: u32, name: &str, exe: Option<&Path>, cgroup: &str) -> E
             if unit.starts_with("app-") && (unit.ends_with(".scope") || unit.ends_with(".service"))
             {
                 let app = app_name(unit);
-                return Entity::new(
-                    format!("app/{uid}/{app}"),
-                    format!("{app} (uid {uid})"),
-                    Kind::Application,
-                );
+                return Entity::new(format!("application/{app}"), app, Kind::Application);
             }
             if unit.ends_with(".service") && !unit.starts_with("user@") {
                 // Service descendants belong to the same service, not to their individual PIDs.
@@ -147,15 +143,10 @@ pub(super) fn group(uid: u32, name: &str, exe: Option<&Path>, cgroup: &str) -> E
             }
         }
     }
-    let executable = exe.map_or_else(|| name.to_owned(), |p| p.to_string_lossy().into_owned());
     let label = exe
         .and_then(Path::file_name)
         .map_or_else(|| name.to_owned(), |s| s.to_string_lossy().into_owned());
-    Entity::new(
-        format!("exe/{uid}/{executable}"),
-        format!("{label} (uid {uid})"),
-        Kind::Application,
-    )
+    Entity::new(format!("application/{label}"), label, Kind::Application)
 }
 
 fn app_name(unit: &str) -> String {
@@ -164,15 +155,41 @@ fn app_name(unit: &str) -> String {
         .unwrap_or(unit)
         .trim_end_matches(".scope")
         .trim_end_matches(".service");
+    launch_name(name)
+}
+
+fn launch_name(name: &str) -> String {
     let name = name.split_once('@').map_or(name, |(name, _)| name);
-    let name = name
-        .rsplit_once('-')
-        .filter(|(_, suffix)| {
-            suffix.chars().all(|c| c.is_ascii_digit())
-                || (suffix.len() >= 6 && suffix.chars().all(|c| c.is_ascii_hexdigit()))
-        })
-        .map_or(name, |(name, _)| name);
+    let mut name = name;
+    while let Some((base, _)) = name.rsplit_once('-').filter(|(_, suffix)| {
+        !suffix.is_empty()
+            && (suffix.chars().all(|c| c.is_ascii_digit())
+                || (suffix.len() >= 6 && suffix.chars().all(|c| c.is_ascii_hexdigit())))
+    }) {
+        name = base;
+    }
     name.to_owned()
+}
+
+/// Resolve saved launch identities and executable paths to the current application key.
+pub(super) fn report_entity(entity: &Entity) -> Entity {
+    if entity.kind != Kind::Application {
+        return entity.clone();
+    }
+    let Some((source, rest)) = entity.id.split_once('/') else {
+        return entity.clone();
+    };
+    let Some((_, identity)) = rest.split_once('/') else {
+        return entity.clone();
+    };
+    let label = match source {
+        "app" => launch_name(identity),
+        "exe" => Path::new(identity)
+            .file_name()
+            .map_or_else(|| identity.to_owned(), |s| s.to_string_lossy().into_owned()),
+        _ => return entity.clone(),
+    };
+    Entity::new(format!("application/{label}"), label, Kind::Application)
 }
 
 pub(super) fn device_activity(sample: &Sample) -> Vec<Observation> {
