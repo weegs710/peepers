@@ -5,6 +5,7 @@ use iced::{Element, Fill};
 use peepers_core::energy::{CPU, Kind, Report, Row};
 
 use crate::graph::{Graph, Scale, Tone};
+use crate::widgets::fold_header;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Range {
@@ -43,6 +44,7 @@ pub enum Message {
     Select(String),
     Filter(String),
     Activity(bool),
+    Fold,
 }
 
 #[derive(Default)]
@@ -52,6 +54,8 @@ pub struct Energy {
     selected: Option<String>,
     filter: String,
     activity: bool,
+    /// Folded at every start, because the open section is far taller than the window.
+    open: bool,
     pub save_error: Option<String>,
     pub saving: bool,
 }
@@ -75,12 +79,24 @@ impl Energy {
             }
             Message::Filter(filter) => self.filter = filter,
             Message::Activity(activity) => self.activity = activity,
+            Message::Fold => self.open = !self.open,
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let header = fold_header("Energy history", self.open, Message::Fold);
+        if !self.open {
+            let warning = self
+                .report
+                .as_ref()
+                .and_then(|report| report.warning.as_ref());
+            return column![header]
+                .extend(warning.map(|warning| text(warning).style(text::danger).into()))
+                .spacing(12)
+                .into();
+        }
         let mut content = column![
-            row![text("Energy history").size(28), pick_list([Range::Day, Range::Week, Range::Month, Range::Quarter], Some(self.range), Message::Range)].spacing(24),
+            row![header, pick_list([Range::Day, Range::Week, Range::Month, Range::Quarter], Some(self.range), Message::Range)].spacing(24).align_y(iced::Center),
             text("Recorded while Peepers is running, including in the tray. Display pause does not pause collection.").style(text::secondary),
             text("CPU shares are estimates from CPU activity, not whole-app power or predicted savings. Hardware channels overlap: do not add them together.").style(text::secondary),
         ].spacing(12);

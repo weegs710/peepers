@@ -640,9 +640,8 @@ impl Peepers {
     }
 
     fn power_view(&self) -> Element<'_, Message> {
-        let mut energy = column![self.energy.view().map(Message::Energy)].spacing(12);
-        if let Some(error) = &self.energy.save_error {
-            energy = column![
+        let notice = self.energy.save_error.as_ref().map(|error| {
+            column![
                 text(format!(
                     "Could not save energy history before quitting: {error}"
                 ))
@@ -652,14 +651,15 @@ impl Peepers {
                     button("Quit without saving energy").on_press(Message::QuitWithoutEnergySave)
                 ]
                 .spacing(12),
-                energy,
             ]
-            .spacing(12);
-        }
+            .spacing(12)
+            .into()
+        });
         power::view(
             &self.history,
             self.preferences.settings.units.temperature,
-            energy.into(),
+            notice,
+            self.energy.view().map(Message::Energy),
         )
     }
 

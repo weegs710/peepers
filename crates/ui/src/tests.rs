@@ -127,7 +127,7 @@ fn energy_history_updates_while_hidden_and_paused_and_can_change_range() {
         Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
     );
     update(&mut app, Message::Navigate(Page::Power));
-    assert!(ui(&app).find("Energy history").is_ok());
+    click(&mut app, "Energy history");
     assert!(ui(&app).find("Browser (uid 1000)").is_ok());
     update(
         &mut app,
@@ -155,6 +155,7 @@ fn energy_history_selection_filter_and_save_failures_are_visible() {
         Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
     );
     update(&mut app, Message::Navigate(Page::Power));
+    click(&mut app, "Energy history");
     update(
         &mut app,
         Message::Energy(energy::Message::Select("app/browser".into())),
@@ -186,6 +187,54 @@ fn energy_history_selection_filter_and_save_failures_are_visible() {
 }
 
 #[test]
+fn energy_history_starts_folded_below_the_sensors_and_keeps_its_warning_in_sight() {
+    let mut app = Peepers::default();
+    let mut report = energy_report();
+    report.warning = Some("Energy history could not be saved: disk full".into());
+    update(
+        &mut app,
+        Message::Energy(energy::Message::Reported(Arc::new(report))),
+    );
+    update(&mut app, Message::Navigate(Page::Power));
+    let mut folded = ui(&app);
+    let header = folded.find("Energy history").unwrap().bounds();
+    let sensors = folded
+        .find("Waiting for live sensor readings")
+        .unwrap()
+        .bounds();
+    assert!(header.y > sensors.y);
+    assert!(folded.find("Browser (uid 1000)").is_err());
+    assert!(folded.find("24 hours").is_err());
+    assert!(
+        folded
+            .find("Energy history could not be saved: disk full")
+            .is_ok()
+    );
+    drop(folded);
+    click(&mut app, "Energy history");
+    assert!(ui(&app).find("Browser (uid 1000)").is_ok());
+    click(&mut app, "Energy history");
+    assert!(ui(&app).find("Browser (uid 1000)").is_err());
+}
+
+#[test]
+fn a_failed_save_on_quit_is_shown_above_the_sensors() {
+    let mut app = Peepers::default();
+    update(&mut app, Message::EnergyFlushed(Err("disk full".into())));
+    assert_eq!(app.page, Page::Power);
+    let mut simulator = ui(&app);
+    let notice = simulator
+        .find("Could not save energy history before quitting: disk full")
+        .unwrap()
+        .bounds();
+    let sensors = simulator
+        .find("Waiting for live sensor readings")
+        .unwrap()
+        .bounds();
+    assert!(notice.y < sensors.y);
+}
+
+#[test]
 #[ignore = "renders PNGs for visual review; set PEEPERS_SHOTS to an empty directory"]
 fn render_energy_history() {
     let directory = std::env::var("PEEPERS_SHOTS").unwrap();
@@ -195,6 +244,7 @@ fn render_energy_history() {
         Message::Energy(energy::Message::Reported(Arc::new(energy_report()))),
     );
     update(&mut app, Message::Navigate(Page::Power));
+    click(&mut app, "Energy history");
     for width in [1280.0, 992.0] {
         let snapshot = ui_sized(&app, Size::new(width, 1000.0))
             .snapshot(&Theme::Dark)

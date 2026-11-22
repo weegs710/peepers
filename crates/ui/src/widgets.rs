@@ -187,12 +187,23 @@ impl<C: Sortable> Sorting<C> {
     }
 }
 
-/// The side of the square an arrow is drawn in.
+/// The side of the square a column heading's arrow is drawn in.
 const ARROW: f32 = 12.0;
+/// The side of the square a section heading's arrow is drawn in, sized for its larger text.
+const FOLD_ARROW: f32 = 20.0;
 
-/// A small triangle pointing down for a descending order and up for an ascending one.
-struct Arrow {
-    descending: bool,
+/// The way a small triangle points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrow {
+    Up,
+    Down,
+    Right,
+}
+
+impl Arrow {
+    fn view<'a, Message: 'a>(self, side: f32) -> Element<'a, Message> {
+        canvas::Canvas::new(self).width(side).height(side).into()
+    }
 }
 
 impl<Message> canvas::Program<Message> for Arrow {
@@ -208,20 +219,39 @@ impl<Message> canvas::Program<Message> for Arrow {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let (width, height) = (frame.width(), frame.height());
-        let (base, tip) = if self.descending {
-            (height * 0.3, height * 0.75)
-        } else {
-            (height * 0.7, height * 0.25)
-        };
+        let [first, second, tip] = match self {
+            Self::Down => [(0.15, 0.3), (0.85, 0.3), (0.5, 0.75)],
+            Self::Up => [(0.15, 0.7), (0.85, 0.7), (0.5, 0.25)],
+            Self::Right => [(0.3, 0.15), (0.3, 0.85), (0.75, 0.5)],
+        }
+        .map(|(x, y)| Point::new(width * x, height * y));
         let triangle = Path::new(|path| {
-            path.move_to(Point::new(width * 0.15, base));
-            path.line_to(Point::new(width * 0.85, base));
-            path.line_to(Point::new(width * 0.5, tip));
+            path.move_to(first);
+            path.line_to(second);
+            path.line_to(tip);
             path.close();
         });
         frame.fill(&triangle, theme.palette().text);
         vec![frame.into_geometry()]
     }
+}
+
+/// A heading that folds the section under it away or opens it again, with a triangle that points
+/// at the content when it is open and to the side when it is folded.
+pub fn fold_header<'a, Message: Clone + 'a>(
+    label: &'a str,
+    open: bool,
+    press: Message,
+) -> Element<'a, Message> {
+    let arrow = if open { Arrow::Down } else { Arrow::Right };
+    button(
+        row![arrow.view(FOLD_ARROW), text(label).size(28)]
+            .spacing(10)
+            .align_y(iced::Center),
+    )
+    .on_press(press)
+    .style(button::text)
+    .into()
 }
 
 /// A column heading that orders its table when pressed. It carries an arrow while its column is the
@@ -232,10 +262,8 @@ pub fn sort_header<'a, Message: Clone + 'a>(
     press: Message,
 ) -> Element<'a, Message> {
     let arrow: Element<'a, Message> = match direction {
-        Some(descending) => canvas::Canvas::new(Arrow { descending })
-            .width(ARROW)
-            .height(ARROW)
-            .into(),
+        Some(true) => Arrow::Down.view(ARROW),
+        Some(false) => Arrow::Up.view(ARROW),
         None => space().width(ARROW).height(ARROW).into(),
     };
     button(row![text(label), arrow].spacing(6).align_y(iced::Center))

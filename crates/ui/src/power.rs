@@ -66,23 +66,44 @@ fn is_network(model: &str) -> bool {
         .any(|word| model.contains(word))
 }
 
+/// `notice` goes above everything, so a problem that brought the window to this page is the first
+/// thing on it; the energy history goes last, because it is long.
 pub fn view<'a, Message: 'a>(
     history: &'a History,
     unit: Temperature,
+    notice: Option<Element<'a, Message>>,
     energy: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let Some(latest) = history.latest() else {
-        return scrollable(
-            column![
-                energy,
-                text("Waiting for live sensor readings").style(text::secondary)
-            ]
+    let sensors: Element<'a, Message> = match history.latest() {
+        Some(latest) => column![
+            text("Live sensors").size(28),
+            column(groups(history, latest, unit)).spacing(32)
+        ]
+        .spacing(24)
+        .into(),
+        None => text("Waiting for live sensor readings")
+            .style(text::secondary)
+            .into(),
+    };
+    scrollable(
+        column(notice)
+            .push(sensors)
+            .push(rule::horizontal(2))
+            .push(energy)
             .spacing(24)
             .padding(16),
-        )
-        .into();
-    };
-    let groups = Group::ALL.into_iter().filter_map(|group| {
+    )
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
+fn groups<'a, Message: 'a>(
+    history: &'a History,
+    latest: &'a Vitals,
+    unit: Temperature,
+) -> impl Iterator<Item = Element<'a, Message>> {
+    Group::ALL.into_iter().filter_map(move |group| {
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
         if group == Group::Processor {
             parts.push(processor(history, latest));
@@ -105,20 +126,7 @@ pub fn view<'a, Message: 'a>(
             );
         }
         (!parts.is_empty()).then(|| header(group, parts))
-    });
-    scrollable(
-        column![
-            energy,
-            rule::horizontal(2),
-            text("Live sensors").size(28),
-            column(groups).spacing(32)
-        ]
-        .spacing(24)
-        .padding(16),
-    )
-    .width(Fill)
-    .height(Fill)
-    .into()
+    })
 }
 
 /// A group's name, set apart so it can be found in a long page, over what it holds.
