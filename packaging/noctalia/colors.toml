@@ -1,0 +1,7 @@
+# peepers colours, written by noctalia from the peepers template. Do not edit: noctalia rewrites
+# this file whenever its palette changes, and peepers reads it again on its own.
+mode = "{{ mode }}"
+surface = "{{ colors.surface.default.hex }}"
+on_surface = "{{ colors.on_surface.default.hex }}"
+primary = "{{ colors.primary.default.hex }}"
+error = "{{ colors.error.default.hex }}"

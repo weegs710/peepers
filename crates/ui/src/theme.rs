@@ -1,8 +1,15 @@
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::SystemTime;
 
 use iced::Theme;
 use iced::theme::Palette;
 use serde::Deserialize;
+
+/// The theme whose colours come from the file noctalia writes for peepers.
+pub const NOCTALIA: &str = "Noctalia";
 
 /// Palettes in noctalia's custom palette format, shipped as they were written.
 const SHIPPED: [(&str, &str); 6] = [
@@ -14,7 +21,8 @@ const SHIPPED: [(&str, &str); 6] = [
     ("Twilight", include_str!("../themes/Twilight.json")),
 ];
 
-/// Every theme that can be chosen: iced's own, then the shipped palettes.
+/// Every theme that can be chosen: iced's own, the shipped palettes, and noctalia's, which is listed
+/// with stand-in colours because its own are only known once its file is read.
 static ALL: LazyLock<Vec<Theme>> = LazyLock::new(|| {
     Theme::ALL
         .iter()
@@ -23,6 +31,7 @@ static ALL: LazyLock<Vec<Theme>> = LazyLock::new(|| {
             let file: File = serde_json::from_str(json).expect("a shipped palette is valid");
             Theme::custom(name, file.dark.palette())
         }))
+        .chain([Theme::custom(NOCTALIA, Palette::DARK)])
         .collect()
 });
 
@@ -55,8 +64,105 @@ impl Roles {
             self.on_surface.0,
             self.primary.0,
             self.error.0,
+            Palette::DARK,
         )
     }
+}
+
+/// The colours noctalia's template writes for peepers, and what was last seen of their file.
+#[derive(Debug, Default)]
+pub struct Noctalia {
+    /// Where the file is looked for; without one nothing is read.
+    path: Option<PathBuf>,
+    /// The file's modification time and length when it was last read.
+    seen: Option<(SystemTime, u64)>,
+    theme: Option<Theme>,
+    problem: Option<String>,
+}
+
+impl Noctalia {
+    pub fn at(path: PathBuf) -> Self {
+        Self {
+            path: Some(path),
+            ..Self::default()
+        }
+    }
+
+    pub fn theme(&self) -> Option<&Theme> {
+        self.theme.as_ref()
+    }
+
+    /// Why noctalia's colours are not in use, when they are not.
+    pub fn problem(&self) -> Option<&str> {
+        self.problem.as_deref()
+    }
+
+    /// Reads the file again when it has changed since it was last read, which is how a new
+    /// noctalia palette reaches peepers without a restart.
+    pub fn refresh(&mut self) {
+        let Some(path) = &self.path else { return };
+        let stamp = fs::metadata(path)
+            .ok()
+            .and_then(|meta| Some((meta.modified().ok()?, meta.len())));
+        let read_before = self.theme.is_some() || self.problem.is_some();
+        if read_before && stamp == self.seen {
+            return;
+        }
+        self.seen = stamp;
+        match read(path) {
+            Ok(theme) => {
+                self.theme = Some(theme);
+                self.problem = None;
+            }
+            Err(problem) => {
+                self.theme = None;
+                self.problem = Some(problem);
+            }
+        }
+    }
+}
+
+/// The file noctalia renders from `packaging/noctalia/colors.toml`.
+#[derive(Deserialize)]
+struct Written {
+    mode: Mode,
+    surface: Hex,
+    on_surface: Hex,
+    primary: Hex,
+    error: Hex,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Mode {
+    Dark,
+    Light,
+}
+
+fn read(path: &Path) -> Result<Theme, String> {
+    let shown = path.display();
+    let contents = fs::read_to_string(path).map_err(|error| match error.kind() {
+        ErrorKind::NotFound => format!(
+            "noctalia has not written {shown} yet, so Dark is in use. Add the peepers template to noctalia."
+        ),
+        _ => format!("{shown} could not be read, so Dark is in use: {error}"),
+    })?;
+    let written: Written = toml_edit::de::from_str(&contents)
+        .map_err(|error| format!("{shown} could not be read, so Dark is in use: {error}"))?;
+    let fixed = match written.mode {
+        Mode::Dark => Palette::DARK,
+        Mode::Light => Palette::LIGHT,
+    };
+    Ok(Theme::custom(
+        NOCTALIA,
+        palette(
+            written.surface.0,
+            written.on_surface.0,
+            written.primary.0,
+            written.error.0,
+            fixed,
+        ),
+    ))
 }
 
 /// A colour written as `#rrggbb`.
@@ -74,19 +180,21 @@ impl TryFrom<String> for Hex {
     }
 }
 
-/// Success and warning keep iced's own colours, so they read the same whatever the palette.
+/// Success and warning keep iced's own colours from `fixed`, so they read the same whatever the
+/// palette.
 fn palette(
     background: iced::Color,
     text: iced::Color,
     primary: iced::Color,
     danger: iced::Color,
+    fixed: Palette,
 ) -> Palette {
     Palette {
         background,
         text,
         primary,
         danger,
-        ..Palette::DARK
+        ..fixed
     }
 }
 
@@ -102,7 +210,7 @@ mod tests {
 
     #[test]
     fn every_shipped_palette_is_listed_after_iceds_own_with_its_own_colours() {
-        let shipped = &all()[Theme::ALL.len()..];
+        let shipped = &all()[Theme::ALL.len()..all().len() - 1];
         let expected = [
             ("Cold Wind", "#05070b", "#eaf3fa", "#33c9ff", "#e07a9c"),
             ("Cymagentan", "#2a122c", "#f3f2f3", "#de67e4", "#fd4663"),

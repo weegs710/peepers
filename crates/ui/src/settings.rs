@@ -5,13 +5,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
-use iced::{Element, Subscription, Task, Theme, event, keyboard};
+use iced::{Element, Subscription, Task, Theme, event, keyboard, time};
 use serde::{Deserialize, Serialize};
 
 use crate::Page;
 use crate::blocking;
 use crate::notice::Notice;
-use crate::theme;
+use crate::theme::{self, Noctalia};
 
 mod file;
 
@@ -58,6 +58,8 @@ const TEXT_SIZES: RangeInclusive<u8> = 12..=24;
 const TEXT_STEP: u8 = 2;
 /// The size the interface is drawn at without any scaling.
 const TEXT_DEFAULT: u8 = 16;
+/// How often the file noctalia writes is looked at for new colours.
+const RECHECK: Duration = Duration::from_secs(1);
 
 /// How often the machine is read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,9 +171,14 @@ pub struct Units {
 
 impl Settings {
     pub fn path() -> PathBuf {
+        Self::directory().join("settings.toml")
+    }
+
+    /// Where peepers' own configuration lives, beside which noctalia writes its colours.
+    pub fn directory() -> PathBuf {
         let home = env::var("HOME").unwrap_or_default();
         PathBuf::from(env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config")))
-            .join("peepers/settings.toml")
+            .join("peepers")
     }
 
     /// The text size moved onto the nearest notch inside the allowed range, so a hand-edited file
@@ -259,6 +266,8 @@ pub enum Message {
     /// What was written, or why it could not be.
     Saved(Result<Settings, String>),
     Dismiss,
+    /// Time to see whether noctalia has written new colours.
+    Recheck,
 }
 
 /// The settings and what to tell the user about saving them.
@@ -272,19 +281,22 @@ pub struct Preferences {
     /// The text size under the pointer while the slider is held.
     dragging: Option<u8>,
     notice: Option<Notice>,
+    noctalia: Noctalia,
 }
 
 impl Preferences {
     /// Settings from disk; a file that cannot be read leaves the defaults and says why.
     pub fn load() -> Self {
         let path = Settings::path();
-        match file::read(&path) {
+        let noctalia = Noctalia::at(Settings::directory().join("noctalia.toml"));
+        let mut preferences = match file::read(&path) {
             Ok(settings) => Self {
                 base: settings.clone(),
                 settings,
                 path: Some(path),
                 dragging: None,
                 notice: None,
+                noctalia,
             },
             Err(error) => Self {
                 settings: Settings::default(),
@@ -294,13 +306,47 @@ impl Preferences {
                 notice: Some(Notice::failure(format!(
                     "The settings file could not be read, so the defaults are in use: {error}"
                 ))),
+                noctalia,
             },
+        };
+        preferences.recheck();
+        preferences
+    }
+
+    fn follows_noctalia(&self) -> bool {
+        self.settings.appearance.theme == theme::NOCTALIA
+    }
+
+    fn recheck(&mut self) {
+        if self.follows_noctalia() {
+            self.noctalia.refresh();
+        }
+    }
+
+    /// The theme to draw with: the chosen one, with noctalia's colours once they have been read.
+    pub fn theme(&self) -> Theme {
+        if self.follows_noctalia() {
+            self.noctalia.theme().cloned().unwrap_or(Theme::Dark)
+        } else {
+            self.settings.theme()
+        }
+    }
+
+    /// Noctalia's file is only watched while its theme is the one chosen.
+    pub fn subscription(&self) -> Subscription<Message> {
+        if self.follows_noctalia() {
+            time::every(RECHECK).map(|_| Message::Recheck)
+        } else {
+            Subscription::none()
         }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Theme(theme) => self.settings.appearance.theme = theme.to_string(),
+            Message::Theme(theme) => {
+                self.settings.appearance.theme = theme.to_string();
+                self.recheck();
+            }
             Message::StartPage(page) => self.settings.startup.page = page,
             Message::Temperature(temperature) => self.settings.units.temperature = temperature,
             Message::Interval(interval) => self.settings.sampling.interval = interval,
@@ -331,6 +377,10 @@ impl Preferences {
                 self.notice = None;
                 return Task::none();
             }
+            Message::Recheck => {
+                self.recheck();
+                return Task::none();
+            }
         }
         self.write()
             .map_or_else(Task::none, |write| blocking::run(write).map(Message::Saved))
@@ -347,10 +397,17 @@ impl Preferences {
     pub fn view<'a>(&'a self, tray_error: Option<&'a str>) -> Element<'a, Message> {
         column![
             text("Settings").size(24),
-            setting(
+            column![setting(
                 "Theme",
                 pick_list(theme::all(), Some(self.settings.theme()), Message::Theme).width(CONTROL)
-            ),
+            )]
+            .extend(
+                self.noctalia
+                    .problem()
+                    .filter(|_| self.follows_noctalia())
+                    .map(|problem| text(problem).style(text::secondary).into()),
+            )
+            .spacing(8),
             setting(
                 "Start on",
                 pick_list(
@@ -680,5 +737,116 @@ mod tests {
         let after = file::read(&path).unwrap();
         assert!(after.startup.tray);
         assert_eq!(after.units.temperature, Temperature::Fahrenheit);
+    }
+
+    /// What noctalia's own renderer wrote from `packaging/noctalia/colors.toml` for a dark palette.
+    const RENDERED: &str = "# peepers colours, written by noctalia from the peepers template. Do not edit: noctalia rewrites
+# this file whenever its palette changes, and peepers reads it again on its own.
+mode = \"dark\"
+surface = \"#000000\"
+on_surface = \"#e8ecf1\"
+primary = \"#ff2a22\"
+error = \"#ff6b7a\"
+";
+
+    fn following_noctalia(file: PathBuf) -> Preferences {
+        let mut preferences = Preferences {
+            noctalia: Noctalia::at(file),
+            ..Preferences::default()
+        };
+        let listed = theme::all()
+            .iter()
+            .find(|theme| theme.to_string() == theme::NOCTALIA)
+            .unwrap()
+            .clone();
+        drop(preferences.update(Message::Theme(listed)));
+        preferences
+    }
+
+    fn colour(hex: &str) -> iced::Color {
+        hex.parse().unwrap()
+    }
+
+    #[test]
+    fn choosing_noctalia_draws_with_the_colours_its_template_wrote() {
+        let scratch = Scratch::new("noctalia-read");
+        let file = scratch.0.join("noctalia.toml");
+        fs::write(&file, RENDERED).unwrap();
+        let preferences = following_noctalia(file);
+        let palette = preferences.theme().palette();
+        assert_eq!(palette.background, colour("#000000"));
+        assert_eq!(palette.text, colour("#e8ecf1"));
+        assert_eq!(palette.primary, colour("#ff2a22"));
+        assert_eq!(palette.danger, colour("#ff6b7a"));
+        assert_eq!(palette.success, iced::theme::Palette::DARK.success);
+        assert_eq!(preferences.theme().to_string(), theme::NOCTALIA);
+        assert_eq!(preferences.settings.theme().to_string(), theme::NOCTALIA);
+        assert!(preferences.noctalia.problem().is_none());
+    }
+
+    #[test]
+    fn new_colours_from_noctalia_are_picked_up_without_a_restart() {
+        let scratch = Scratch::new("noctalia-change");
+        let file = scratch.0.join("noctalia.toml");
+        fs::write(&file, RENDERED).unwrap();
+        let mut preferences = following_noctalia(file.clone());
+        fs::write(
+            &file,
+            RENDERED.replace("primary = \"#ff2a22\"", "primary = \"#33c9ff\"\n"),
+        )
+        .unwrap();
+        drop(preferences.update(Message::Recheck));
+        assert_eq!(preferences.theme().palette().primary, colour("#33c9ff"));
+    }
+
+    #[test]
+    fn without_noctalias_file_the_theme_is_dark_and_says_why() {
+        let scratch = Scratch::new("noctalia-missing");
+        let file = scratch.0.join("noctalia.toml");
+        let mut preferences = following_noctalia(file.clone());
+        assert_eq!(preferences.theme(), Theme::Dark);
+        assert!(
+            preferences
+                .noctalia
+                .problem()
+                .unwrap()
+                .contains("has not written")
+        );
+        fs::write(&file, RENDERED).unwrap();
+        drop(preferences.update(Message::Recheck));
+        assert_eq!(preferences.theme().palette().primary, colour("#ff2a22"));
+        fs::write(&file, "mode = \"dark\"\nsurface = \"no colour\"\n").unwrap();
+        drop(preferences.update(Message::Recheck));
+        assert_eq!(preferences.theme(), Theme::Dark);
+        assert!(
+            preferences
+                .noctalia
+                .problem()
+                .unwrap()
+                .contains("could not be read")
+        );
+    }
+
+    #[test]
+    fn a_light_noctalia_palette_keeps_iceds_light_status_colours() {
+        let scratch = Scratch::new("noctalia-light");
+        let file = scratch.0.join("noctalia.toml");
+        fs::write(&file, RENDERED.replace("\"dark\"", "\"light\"")).unwrap();
+        let palette = following_noctalia(file).theme().palette();
+        assert_eq!(palette.warning, iced::theme::Palette::LIGHT.warning);
+    }
+
+    #[test]
+    fn noctalias_file_is_only_read_while_its_theme_is_chosen() {
+        let scratch = Scratch::new("noctalia-unchosen");
+        let file = scratch.0.join("noctalia.toml");
+        fs::write(&file, RENDERED).unwrap();
+        let mut preferences = Preferences {
+            noctalia: Noctalia::at(file),
+            ..Preferences::default()
+        };
+        drop(preferences.update(Message::Recheck));
+        assert!(preferences.noctalia.theme().is_none());
+        assert_eq!(preferences.theme(), Theme::Dark);
     }
 }

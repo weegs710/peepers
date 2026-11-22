@@ -359,7 +359,7 @@ impl Peepers {
     }
 
     fn theme(&self, _window: iced::window::Id) -> Theme {
-        self.preferences.settings.theme()
+        self.preferences.theme()
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -634,6 +634,7 @@ impl Peepers {
             telemetry::subscription(&self.collector, interval),
             window::events().map(Message::Window),
             settings::keys().map(Message::Settings),
+            self.preferences.subscription().map(Message::Settings),
             self.door.subscription().map(Message::Ipc),
             self.tray.subscription().map(Message::Tray),
             page,

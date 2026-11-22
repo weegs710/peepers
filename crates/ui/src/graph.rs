@@ -325,7 +325,18 @@ impl Graph {
     /// Everything but the size, which the cache already tells apart, that changes the picture.
     fn fingerprint(&self, theme: &Theme) -> u64 {
         let mut hasher = DefaultHasher::new();
-        theme.to_string().hash(&mut hasher);
+        // The colours and not the name, because noctalia's theme keeps its name when its colours change.
+        let palette = theme.palette();
+        for colour in [
+            palette.background,
+            palette.text,
+            palette.primary,
+            palette.success,
+            palette.warning,
+            palette.danger,
+        ] {
+            colour.into_rgba8().hash(&mut hasher);
+        }
         match self.scale {
             Scale::Fixed(ceiling) => (0_u8, ceiling.to_bits()),
             Scale::Fit { floor } => (1, floor.to_bits()),
@@ -645,6 +656,12 @@ mod tests {
         assert_ne!(base, cpu(vec![1.0, 2.5]).fingerprint(&dark));
         assert_ne!(base, cpu(vec![1.0, 2.0, 3.0]).fingerprint(&dark));
         assert_ne!(base, cpu(vec![1.0, 2.0]).fingerprint(&Theme::Light));
+        let mut recoloured = Theme::Dark.palette();
+        recoloured.primary = iced::Color::WHITE;
+        assert_ne!(
+            cpu(vec![1.0, 2.0]).fingerprint(&Theme::custom("Same", Theme::Dark.palette())),
+            cpu(vec![1.0, 2.0]).fingerprint(&Theme::custom("Same", recoloured))
+        );
         assert_ne!(base, cpu(vec![1.0, 2.0]).marker(0.5).fingerprint(&dark));
         assert_ne!(base, cpu(vec![1.0, 2.0]).span(10).fingerprint(&dark));
         assert_ne!(

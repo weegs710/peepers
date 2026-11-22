@@ -1,0 +1,8 @@
+[catalog.peepers]
+name = "peepers"
+category = "system"
+
+# peepers reads ~/.config/peepers/noctalia.toml again whenever it changes; no hook needed.
+[templates.peepers]
+input_path = "colors.toml"
+output_path = "$XDG_CONFIG_HOME/peepers/noctalia.toml"
