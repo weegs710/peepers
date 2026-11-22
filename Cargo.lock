@@ -2504,6 +2504,7 @@ dependencies = [
  "jiff",
  "peepers-core",
  "serde",
+ "serde_json",
  "smol",
  "toml_edit",
 ]

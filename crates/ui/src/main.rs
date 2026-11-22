@@ -24,6 +24,7 @@ mod settings;
 mod startup;
 mod storage;
 mod telemetry;
+mod theme;
 mod tray;
 mod users;
 mod widgets;

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::Page;
 use crate::blocking;
 use crate::notice::Notice;
+use crate::theme;
 
 mod file;
 
@@ -201,7 +202,7 @@ impl Settings {
 
     /// The saved theme, or the default dark one when the name is not one this version knows.
     pub fn theme(&self) -> Theme {
-        Theme::ALL
+        theme::all()
             .iter()
             .find(|theme| theme.to_string() == self.appearance.theme)
             .cloned()
@@ -348,7 +349,7 @@ impl Preferences {
             text("Settings").size(24),
             setting(
                 "Theme",
-                pick_list(Theme::ALL, Some(self.settings.theme()), Message::Theme).width(CONTROL)
+                pick_list(theme::all(), Some(self.settings.theme()), Message::Theme).width(CONTROL)
             ),
             setting(
                 "Start on",
@@ -569,7 +570,7 @@ mod tests {
 
     #[test]
     fn every_theme_name_finds_its_theme_again() {
-        for name in Theme::ALL {
+        for name in crate::theme::all() {
             assert_eq!(&theme(&name.to_string()).theme(), name);
         }
     }
