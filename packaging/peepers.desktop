@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=peepers
+Comment=Watch, record, inspect and manage this machine
+Exec=peepers
+Icon=peepers
+Terminal=false
+Categories=System;Monitor;

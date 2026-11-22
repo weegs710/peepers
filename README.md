@@ -2,8 +2,6 @@
 
 A system monitor and task manager for Linux, written in Rust with [iced](https://iced.rs). One window of pages for watching, recording, inspecting and managing the machine, a popout of live gauges, a tray icon, and a command line that drives the running copy.
 
-> **Important**: This is a work in progress and only exists as a development build for now. Changes will keep coming in and they may be breaking, and some features and functions may be dropped in future iterations. Treat the codebase as an alpha. Backwards compatibility is not currently on the table, but it is a consideration being made in the development cycle moving forward.
-
 > **Requirements**: Linux, a Rust toolchain that supports edition 2024, and three libraries: wayland, libxkbcommon and vulkan-loader. The tray icon and the command line need a session D-Bus, and the Services and Users pages need systemd. See [Platforms](./docs/platforms.md) for everything it reads.
 
 ## Quickstart
@@ -22,13 +20,13 @@ $ peepers --flight start          # start a flight recording, no window needed
 
 ## What It Shows
 
-| Section | Pages                                                                    |
-| ------- | ------------------------------------------------------------------------ |
-| WATCH   | Processes, Performance, Pressure, Power                                  |
-| RECORD  | Flight recorder, Benchmarks                                              |
-| INSPECT | Connections, Drivers, Disk space, Installed apps, System information     |
-| MANAGE  | Services, Startup apps, Users                                            |
-| PEEPERS | Settings                                                                 |
+| Section | Pages                                                                |
+| ------- | -------------------------------------------------------------------- |
+| WATCH   | Processes, Performance, Pressure, Power                              |
+| RECORD  | Flight recorder, Benchmarks                                          |
+| INSPECT | Connections, Drivers, Disk space, Installed apps, System information |
+| MANAGE  | Services, Startup apps, Users                                        |
+| PEEPERS | Settings                                                             |
 
 The popout is a second, narrow window of the same live gauges that stays beside your work. It has its own application id, `peepers-popout`, so a compositor rule can float and place it. The main window's is `peepers`.
 
@@ -98,6 +96,15 @@ On NixOS the binary only finds its libraries from inside that shell, so start it
 $ cargo build --release
 $ install -Dm755 target/release/peepers ~/.local/bin/peepers
 ```
+
+**Launcher and icon.** [`packaging/peepers.desktop`](./packaging/peepers.desktop) and [`packaging/peepers.png`](./packaging/peepers.png) give application menus, docks and window lists the name and icon:
+
+```console
+$ install -Dm644 packaging/peepers.desktop ~/.local/share/applications/peepers.desktop
+$ install -Dm644 packaging/peepers.png ~/.local/share/icons/hicolor/512x512/apps/peepers.png
+```
+
+The entry runs `peepers` from your `PATH`. On NixOS, point its `Exec` at the `nix-shell` command above instead. Shells that match windows to desktop entries by application id find it for the main window, whose id is `peepers`.
 
 Only one copy can be driven from the command line, so start it once per session, for example from your compositor's autostart. See [Building and testing](./docs/building.md) for the tests.
 
