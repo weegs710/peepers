@@ -68,3 +68,5 @@ A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifier
 ## Settings
 
 `settings.toml` in `$XDG_CONFIG_HOME/peepers`, or `~/.config/peepers` when that is not set. Each change is written as it is made: the file is read again, the settings that changed since peepers last read or wrote it are set in place, and the result is renamed into place from a temporary file. A file that cannot be read leaves the defaults and says why on the Settings page. [The settings file](./settings.md) lists the keys.
+
+The theme list is iced's themes, the palettes in `crates/ui/themes/` read when the list is first needed, and Noctalia. While Noctalia is chosen, a subscription looks at `noctalia.toml` beside the settings once a second and reads it again when its modification time or length changes. Graphs cache their picture by the theme's colours rather than its name, because Noctalia keeps its name when its colours change. See [Themes](./themes.md).

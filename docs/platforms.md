@@ -2,7 +2,7 @@
 
 What peepers reads and what it needs from the system around it.
 
-peepers has been built and run on NixOS under the Umbriel compositor, and on no other system.
+peepers is developed and tested on NixOS under the Umbriel compositor. Other distributions and compositors are not tested. The few places that know about NixOS are listed under [NixOS paths](#nixos-paths).
 
 ## What it reads
 
@@ -26,6 +26,7 @@ peepers has been built and run on NixOS under the Umbriel compositor, and on no 
 | kernel modules                                           | `/proc/modules`, `/sys/module`, and the module metadata under `/lib/modules/<release>` |
 | the system report                                        | `/etc/os-release`, `/proc/sys/kernel/hostname` and `osrelease` |
 | desktop entries and autostart entries                    | the XDG data and config directories         |
+| noctalia's colours, while the Noctalia theme is chosen   | `noctalia.toml` in `$XDG_CONFIG_HOME/peepers` |
 
 peepers runs two external programs: `nvidia-smi`, where an NVIDIA adapter's readings come from, and `sh -c`, which runs the command typed into the Processes page.
 
@@ -33,7 +34,7 @@ The internet benchmark contacts a server, and only when you ask for it.
 
 ## Sensitive reads
 
-What peepers reads that you could reasonably ask about, what it takes from each, and why.
+A task manager has to look at some files that sound alarming out of context. Here is each one, exactly what peepers takes from it, and why it needs it.
 
 ### `/etc/passwd`
 

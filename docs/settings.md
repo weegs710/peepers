@@ -22,7 +22,7 @@ temperature = "celsius"
 
 | Key                      | Values                                                          | Default     |
 | ------------------------ | --------------------------------------------------------------- | ----------- |
-| `appearance.theme`       | any theme iced lists, by the name the Settings page shows       | `Dark`      |
+| `appearance.theme`       | a theme by the name the Settings page shows. See [Themes](./themes.md) | `Dark`      |
 | `appearance.text_size`   | 12 to 24 in steps of 2. Any other value is moved to the nearest | `16`        |
 | `startup.page`           | a page name from [Controlling a running peepers](./control.md#pages) | `processes` |
 | `startup.tray`           | `true` or `false`                                               | `true`      |

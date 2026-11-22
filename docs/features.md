@@ -39,7 +39,7 @@ Per-process read and write figures are only available for your own processes.
 
 Package power, each logical processor's clock, and the machine's sensors, with graphs. Sensors are named by what they measure, such as the processor or a memory module, because the name the hardware reports for those is that of a chipset bridge. The kernel usually restricts power counters to privileged users, so package power can be unavailable when peepers runs as a normal user.
 
-Persistent [energy history](./energy.md) records CPU package energy, available device power sensors, battery discharge, estimated CPU shares for apps and services, and device activity. Choose a range up to 90 days, rank by energy, and select a row for hourly or daily history. Collection continues in the tray and while the display is paused. Hardware readings and estimates are labelled separately; missing data stays unknown.
+Below the sensors, folded until you open it, persistent [energy history](./energy.md) records CPU package energy, available device power sensors, battery discharge, estimated CPU shares for apps and services, and device activity. Choose a range up to 90 days, rank by energy, and select a row for hourly or daily history. Collection continues in the tray and while the display is paused. Hardware readings and estimates are labelled separately; missing data stays unknown.
 
 ## Record
 
@@ -114,7 +114,7 @@ Every user that owns a running process, with their sessions, process count, CPU 
 
 | Setting                | Choices                                                   |
 | ---------------------- | --------------------------------------------------------- |
-| Theme                  | any theme iced lists                                      |
+| Theme                  | iced's themes, six shipped palettes, or [Noctalia](./themes.md) |
 | Start on               | any page                                                  |
 | Temperatures           | Celsius or Fahrenheit                                     |
 | Read the machine every | 100 ms, 250 ms, 500 ms, 1 s, 2 s or 5 s                  |
