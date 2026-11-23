@@ -1,0 +1,43 @@
+name: cachix
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    # the token is an environment secret, released only after weegs710 approves the run
+    environment: cachix
+    if: ${{ github.repository == 'weegs710/peepers' && !github.event.repository.private }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@bb0495a1086c46893eee56f32fd192dfe4a15bb9 # v32.0.0
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: peepers
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - run: nix build .#default --fallback
+
+  # the cachix branch only ever names a commit whose build is in the cache, so a pin on it always hits
+  push:
+    needs: cache
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'weegs710/peepers' && !github.event.repository.private }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: move the cachix branch
+        run: |
+          git fetch origin main cachix 2>/dev/null || git fetch origin main
+          git merge-base --is-ancestor "${{ github.sha }}" origin/main || exit 0
+          git merge-base --is-ancestor "${{ github.sha }}" origin/cachix 2>/dev/null && exit 0
+          git push origin "${{ github.sha }}":refs/heads/cachix --force
