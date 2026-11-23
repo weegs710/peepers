@@ -12,7 +12,7 @@ permissions:
 jobs:
   cache:
     runs-on: ubuntu-latest
-    # the token is an environment secret, released only after weegs710 approves the run
+    # the token is an environment secret, so only jobs running on main can read it
     environment: cachix
     if: ${{ github.repository == 'weegs710/peepers' && !github.event.repository.private }}
     steps:
