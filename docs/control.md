@@ -86,30 +86,40 @@ A page name that does not exist is refused with an `InvalidArgs` error whose mes
 
 ### Properties
 
-Read-only, and kept current by the application as it changes.
+Properties describe the running application's state. They can be read but not set, and the application updates them as its state changes.
 
-| Property      | Type | Meaning                                              |
-| ------------- | ---- | ---------------------------------------------------- |
-| `Paused`      | `b`  | the pages are holding what they show                 |
-| `PopoutOpen`  | `b`  | the popout window is open                            |
-| `WindowOpen`  | `b`  | the main window is open                              |
-| `Page`        | `s`  | the page the main window is on, as `--page` names it |
-| `Recording`   | `b`  | a flight recording is running                        |
+| Property      | Value                                                        |
+| ------------- | ------------------------------------------------------------ |
+| `Paused`      | true or false: the pages are holding what they show          |
+| `PopoutOpen`  | true or false: the popout window is open                     |
+| `WindowOpen`  | true or false: the main window is open                       |
+| `Page`        | text: the page the main window is on, as `--page` names it   |
+| `Recording`   | true or false: a flight recording is running                 |
 
-`Page` is empty until the application has reported for the first time.
+In D-Bus terms the true-or-false properties are booleans (type `b`) and `Page` is a string (type `s`). `Page` is empty until the application has reported for the first time.
 
-When a property changes, the application emits `org.freedesktop.DBus.Properties.PropertiesChanged` with only the properties that changed. Anything that watches the object can react without asking again.
+When a property changes, the application sends the standard `org.freedesktop.DBus.Properties.PropertiesChanged` signal with only the properties that changed, so a script that listens for it learns about every change without asking again.
 
 ### From a shell
+
+`busctl`, which comes with systemd, can do everything the command line options do and more. Each command below names the bus name, the object and the interface from the table above.
+
+Call a method. This one shows the Services page; `s` says the argument that follows is a string:
 
 ```console
 $ busctl --user call dev.weegs.Peepers /dev/weegs/Peepers \
     dev.weegs.Peepers OpenPage s services
-
-$ busctl --user get-property dev.weegs.Peepers /dev/weegs/Peepers \
-    dev.weegs.Peepers Paused
-
-$ busctl --user monitor dev.weegs.Peepers
 ```
 
-The first asks for a page, the second reads one property, and the third prints every message to and from peepers as it happens, including each `PropertiesChanged`.
+Read a property. This prints `b true` while the numbers are paused and `b false` otherwise:
+
+```console
+$ busctl --user get-property dev.weegs.Peepers /dev/weegs/Peepers \
+    dev.weegs.Peepers Paused
+```
+
+Watch everything peepers sends and receives on the bus, including each `PropertiesChanged`, until you press Ctrl+C:
+
+```console
+$ busctl --user monitor dev.weegs.Peepers
+```

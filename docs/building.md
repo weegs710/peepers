@@ -8,7 +8,7 @@ $ nix-shell
 
 [`shell.nix`](../shell.nix) provides `pkg-config`, the libraries peepers draws with (wayland, libxkbcommon and vulkan-loader), `LD_LIBRARY_PATH` pointing at them, and sets `CARGO_TARGET_DIR` to `~/.cache/cargo-target/peepers`, so a build never lands in the checkout.
 
-Outside Nix, install a Rust toolchain that supports edition 2024, `pkg-config`, and those three libraries, and make sure the binary can find them at run time.
+Outside Nix, install what the [README](../README.md) lists under Requirements, plus `pkg-config`, and make sure the binary can find the libraries at run time.
 
 To run one command in the shell without staying in it:
 
@@ -24,6 +24,17 @@ $ cargo run --release
 ```
 
 The release profile uses thin LTO, a single codegen unit and strips the binary.
+
+## The Nix package
+
+[`package.nix`](../package.nix) builds peepers with `rustPlatform.buildRustPackage`, and [`flake.nix`](../flake.nix) exposes it as `packages.x86_64-linux.default`:
+
+```console
+$ nix build .#default
+$ ./result/bin/peepers
+```
+
+The package finds wayland, libxkbcommon and the Vulkan loader through the binary's RPATH, so it runs without `nix-shell`, and the commands peepers runs do not inherit an `LD_LIBRARY_PATH`. It also installs the desktop entry and the icon under `share/`.
 
 ## Tests
 

@@ -2,15 +2,44 @@
 
 Pick a theme on the Settings page. It is saved as `appearance.theme` in [the settings file](./settings.md), by the name the list shows.
 
-| Themes                                                                 | Colours from                                       |
-| ---------------------------------------------------------------------- | -------------------------------------------------- |
-| every theme iced ships, from Light and Dark to Ferra                   | iced                                               |
-| Cold Wind, Cymagentan, Great Below, Plasm, Triglavian, Twilight        | palettes shipped in `crates/ui/themes/`            |
-| Noctalia                                                               | the noctalia shell's current palette, kept in step |
+## Built-in themes
 
-## The shipped palettes
+These come with peepers and need nothing else. Those marked iced are [iced](https://iced.rs)'s own; those marked peepers are palettes that ship with peepers.
 
-They are noctalia custom palette files, kept as they were written, and only their dark set is used. peepers draws with six colours, and takes four of them from the palette:
+| Theme                | From    |
+| -------------------- | ------- |
+| Light                | iced    |
+| Dark                 | iced    |
+| Dracula              | iced    |
+| Nord                 | iced    |
+| Solarized Light      | iced    |
+| Solarized Dark       | iced    |
+| Gruvbox Light        | iced    |
+| Gruvbox Dark         | iced    |
+| Catppuccin Latte     | iced    |
+| Catppuccin Frappé    | iced    |
+| Catppuccin Macchiato | iced    |
+| Catppuccin Mocha     | iced    |
+| Tokyo Night          | iced    |
+| Tokyo Night Storm    | iced    |
+| Tokyo Night Light    | iced    |
+| Kanagawa Wave        | iced    |
+| Kanagawa Dragon      | iced    |
+| Kanagawa Lotus       | iced    |
+| Moonfly              | iced    |
+| Nightfly             | iced    |
+| Oxocarbon            | iced    |
+| Ferra                | iced    |
+| Cold Wind            | peepers |
+| Cymagentan           | peepers |
+| Great Below          | peepers |
+| Plasm                | peepers |
+| Triglavian           | peepers |
+| Twilight             | peepers |
+
+### The peepers palettes
+
+The six peepers palettes are noctalia custom palette files in `crates/ui/themes/`, and only their dark set is used. peepers draws with six colours, and takes four of them from the palette:
 
 | peepers uses | Palette role  |
 | ------------ | ------------- |

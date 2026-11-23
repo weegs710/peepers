@@ -44,17 +44,15 @@ A page with readings of its own loads them when it is entered and keeps them cur
 
 A sample feeds the flight recorder and the tray icon whether or not a window is open. The pages' history takes a sample only while a window is open and the numbers are not paused.
 
-The sampling thread also owns `energy::Collector`. It accounts for each successful sample before sending it to the interface, keeps hourly aggregates, and checkpoints them to the XDG state directory. A stable subscription control changes sampling cadence and report range without restarting the thread. Energy reports reach the UI every ten seconds or on a range change. The collector tracks monotonic time, wall time and uptime to leave gaps across failures, suspend and clock changes. Shutdown waits for a checkpoint; failed saves are visible and offer a retry or explicit discard. See [Energy history](./energy.md) for attribution, retention and permissions.
+The sampling thread also owns `energy::Collector`, which accounts for each sample before the interface sees it, keeps hourly aggregates, and sends a report every ten seconds or when the range changes. A subscription control changes the sampling interval and the report range without restarting the thread. See [Energy history](./energy.md).
 
 ### Windows
 
-`Windows` keeps the main window and the popout. Each has its own application id, `peepers` and `peepers-popout`, which is what a compositor rule matches on. Closing a window destroys it, and opening it again creates a new one. A window that is open without the focus is closed and reopened when it is asked to come forward, because asking an existing window to take the focus had no effect under Umbriel.
-
-A close request on the main window hides it when the tray icon exists. Without the icon it ends the application, because nothing would be left to bring the window back.
+`Windows` keeps the main window and the popout, each with its own application id. Closing a window destroys it, and opening it again creates a new one. A window that is open without the focus is closed and reopened when it is asked to come forward, because asking an existing window to take the focus had no effect under Umbriel.
 
 ### Tray
 
-A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifierWatcher`. It starts only when a watcher answers. The icon is drawn in code at 22 pixels, which a tray that draws at that size shows without scaling, and again at 44 for a host that draws it larger. Its menu has Window, Popout, Pause and Quit.
+A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifierWatcher`. It starts only when a watcher answers. The icon is drawn in code at 22 pixels, which a tray that draws at that size shows without scaling, and again at 44 for a host that draws it larger.
 
 ### Command door
 
@@ -67,6 +65,6 @@ A StatusNotifierItem on the session bus, registered with `org.kde.StatusNotifier
 
 ## Settings
 
-`settings.toml` in `$XDG_CONFIG_HOME/peepers`, or `~/.config/peepers` when that is not set. Each change is written as it is made: the file is read again, the settings that changed since peepers last read or wrote it are set in place, and the result is renamed into place from a temporary file. A file that cannot be read leaves the defaults and says why on the Settings page. [The settings file](./settings.md) lists the keys.
+`settings.rs` holds the settings and draws the Settings page, and `settings/file.rs` reads `settings.toml` and writes back only what changed. [The settings file](./settings.md) describes the file and how it is saved.
 
-The theme list is iced's themes, the palettes in `crates/ui/themes/` read when the list is first needed, and Noctalia. While Noctalia is chosen, a subscription looks at `noctalia.toml` beside the settings once a second and reads it again when its modification time or length changes. Graphs cache their picture by the theme's colours rather than its name, because Noctalia keeps its name when its colours change. See [Themes](./themes.md).
+`theme.rs` builds the theme list once, the first time it is needed: iced's themes, the palettes in `crates/ui/themes/`, and Noctalia. While Noctalia is chosen, a subscription checks `noctalia.toml` and reads it again when its modification time or length changes. Graphs cache their picture by the theme's colours rather than its name, because Noctalia keeps its name when its colours change. See [Themes](./themes.md).

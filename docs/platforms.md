@@ -30,8 +30,6 @@ peepers is developed and tested on NixOS under the Umbriel compositor. Other dis
 
 peepers runs two external programs: `nvidia-smi`, where an NVIDIA adapter's readings come from, and `sh -c`, which runs the command typed into the Processes page.
 
-The internet benchmark contacts a server, and only when you ask for it.
-
 ## Sensitive reads
 
 A task manager has to look at some files that sound alarming out of context. Here is each one, exactly what peepers takes from it, and why it needs it.
@@ -73,9 +71,7 @@ The only connection peepers opens is the internet benchmark's, to the server lis
 
 Without a session bus there is no tray icon and no command line control. The application still runs.
 
-### Init system
-
-Services and Users talk to systemd and logind. No other init system is supported.
+Services and Users need systemd and logind. No other init system is supported.
 
 ## NixOS paths
 
@@ -89,4 +85,4 @@ Three places also know about NixOS locations. They have no effect where those pa
 
 peepers draws with iced's Wayland and X11 backends. It speaks no compositor protocol of its own and runs no compositor's commands, so nothing in it is tied to one compositor.
 
-A window rule can find the main window by its application id `peepers` and the popout by `peepers-popout`. A key can drive the running copy with the [command line](./control.md), which works through D-Bus and so the same under any compositor.
+Window rules can tell the two windows apart by application id, see [The popout](./features.md#the-popout). A key can drive the running copy with the [command line](./control.md), which works through D-Bus and so the same under any compositor.

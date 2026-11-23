@@ -1,12 +1,14 @@
 # Features
 
-What each page shows and what it can change, in the order the navigation rail lists them. Each page has an icon beside its name in the rail.
+peepers is one window of pages, grouped in the navigation rail on its left, plus a popout and a tray icon.
 
-Every table sorts by its columns. Click a heading to sort by that column, and an arrow beside it shows the direction. Click it again to reverse. Number columns start with the largest value first and text columns start at A. The tables are Processes, Connections, Drivers, Disk space (folders, files and file types), Installed apps, Startup apps, Services, Users and the Benchmarks history.
-
-In Processes, Connections, Drivers, Installed apps, Services and Users, the row under the pointer is shaded and the selected row is marked across its whole width. Press anywhere on a row to select it.
-
-A line that reports what an action did goes away by itself after a few seconds when the action worked. A failure, and a note such as the Benchmarks one about older results, stays until you press Dismiss.
+- **Watch**: [Processes](#processes) to list and control running programs, [Performance](#performance) for each device's load, [Pressure](#pressure) for what the machine is waiting on, and [Power](#power) for sensors, clocks and energy history.
+- **Record**: the [Flight recorder](#flight-recorder) to record the machine's vitals and replay them, and [Benchmarks](#benchmarks) for processor, graphics, disk and internet tests.
+- **Inspect**: [Connections](#connections), [Drivers](#drivers), [Disk space](#disk-space), [Installed apps](#installed-apps) and [System information](#system-information).
+- **Manage**: [Services](#services), [Startup apps](#startup-apps) and [Users](#users).
+- **Peepers**: [Settings](#settings).
+- [The popout](#the-popout), a small second window of live gauges, and [the tray icon](#the-tray-icon).
+- How [tables](#tables) and [status messages](#status-messages) work on every page that has them.
 
 ## Watch
 
@@ -39,7 +41,7 @@ Per-process read and write figures are only available for your own processes.
 
 Package power, each logical processor's clock, and the machine's sensors, with graphs. Sensors are named by what they measure, such as the processor or a memory module, because the name the hardware reports for those is that of a chipset bridge. The kernel usually restricts power counters to privileged users, so package power can be unavailable when peepers runs as a normal user.
 
-Below the sensors, folded until you open it, persistent [energy history](./energy.md) records CPU package energy, available device power sensors, battery discharge, estimated CPU shares for apps and services, and device activity. Choose a range up to 90 days, rank by energy, and select a row for hourly or daily history. Collection continues in the tray and while the display is paused. Hardware readings and estimates are labelled separately; missing data stays unknown.
+Below the sensors, folded until you open it, is the [energy history](./energy.md): CPU package energy, device power, battery discharge, estimated CPU shares for apps and services, and device activity, kept for up to 90 days.
 
 ## Record
 
@@ -125,8 +127,25 @@ Each change is saved as it is made. The page shows where the settings file is, a
 
 ## The popout
 
-A narrow second window of live gauges: the same device cards as Performance, in a single column. Open it from the rail, from the tray menu or with `--toggle-pop`. It stays open when the main window is closed, and its graphs keep updating while it is the only window.
+A narrow second window that keeps the machine's vitals in view while you work in something else. It holds the same device cards as the Performance page, one under the other: the processor, memory, each disk, each network interface and each graphics adapter, each with its current reading and a small graph.
+
+Open or close it with the Open popout button at the bottom of the navigation rail, the Open popout entry in the tray icon's menu, or [`peepers --toggle-pop`](./control.md).
+
+Closing the main window leaves the popout open, and its graphs keep moving on their own. Pause holds the popout still along with everything else.
+
+Each window has its own application id, so a compositor rule can treat them differently: the popout is `peepers-popout` and the main window is `peepers`. For example, a rule can float the popout at a fixed size so a tiling layout leaves it alone.
 
 ## The tray icon
 
 An icon that shows the processor and memory load, when a tray host is running. It has a panel for each, marked C and M, with the last 13 readings as columns that rise from the bottom, the newest on the right, and go from green to amber to red as the load climbs. A reading is added for every sample, so the trace spans 13 sample intervals. The tooltip gives the latest percentages. Its menu has Window, Popout, Pause and Quit. Activating the icon brings the window forward, or hides it when it is already in front. Closing the main window hides it to the tray while the icon exists. Without the icon, closing the main window ends the application.
+
+## Tables
+
+Processes, Connections, Drivers, Disk space (folders, files and file types), Installed apps, Startup apps, Services, Users and the Benchmarks history show their data as tables.
+
+- Click a column heading to sort by that column. An arrow beside it shows the direction, and a second click reverses it. Number columns start with the largest value and text columns start at A.
+- In Processes, Connections, Drivers, Installed apps, Services and Users, the row under the pointer is shaded. Press anywhere on a row to select it, and the selected row is marked across its whole width.
+
+## Status messages
+
+When you act on something, such as ending a process or exporting a report, a line on that page says what happened. A success goes away by itself after a few seconds. A failure, or a note such as the one on Benchmarks about older results, stays until you press Dismiss.

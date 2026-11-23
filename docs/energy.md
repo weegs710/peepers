@@ -1,6 +1,6 @@
 # Energy history
 
-Energy history is the last section of **Power**, below the live sensors. It starts folded each time peepers starts; click its heading to open or fold it. A storage problem is shown under the heading even while it is folded. Collection starts automatically with peepers and continues while its windows are hidden or its display is paused. peepers must remain running; exiting it stops collection. The existing tray and desktop autostart facilities can keep it running during a login session.
+Energy history is the last section of **Power**, below the live sensors. It starts folded each time peepers starts; click its heading to open or fold it. A storage problem is shown under the heading even while it is folded. Collection starts automatically with peepers and continues while its windows are hidden or its display is paused. peepers must remain running; exiting it stops collection. Start it at login, from an autostart entry or a user service, to record the whole session.
 
 Choose **24 hours**, **7 days**, **30 days**, or **90 days**, filter the rankings, then select a name to see its timeline. The day view has hourly bins; longer views show UTC days. Ranges include the current, incomplete hour and the preceding hours, so the displayed start and end timestamps are the precise bounds. The first and last day in a longer view can be partial.
 
@@ -38,9 +38,9 @@ Existing history uses the same application grouping in both rankings and timelin
 
 History is stored in `$XDG_STATE_HOME/peepers/energy`, falling back to `~/.local/state/peepers/energy`. It uses one versioned JSON file per UTC hour and retains 90 days. Files contain group names, executable/cgroup identities, UIDs, timestamps and aggregates, not command lines. New directories are private and new files have mode `0600`.
 
-The sampler collects before handing readings to the UI, so a busy, paused, or hidden interface cannot drop accounting samples. Changing the sampling interval preserves the collector and its counter baselines. History refreshes on screen every ten seconds; changing the range requests a new report at the next sample.
+Changing the sampling interval preserves the collector and its counter baselines. History refreshes on screen every ten seconds; changing the range requests a new report at the next sample.
 
-Files are checkpointed every 30 seconds and when quitting normally. A crash or forced termination can lose the uncheckpointed interval. Writes use an atomic rename, and a lock prevents a second peepers instance from overwriting the history. A storage failure is shown on Power; collection can continue in memory. If saving on Quit fails, peepers offers a retry or an explicit exit without saving. Corrupt or unsupported files are reported and preserved, including when this prevents saving new readings for the same hour. Hourly files larger than 16 MiB are rejected without replacing their previous checkpoint.
+Files are checkpointed every 30 seconds and when quitting normally. A crash or forced termination can lose the uncheckpointed interval. Writes use an atomic rename, and a lock prevents a second peepers instance from overwriting the history. If storage fails, collection continues in memory. If saving on Quit fails, peepers offers a retry or an explicit exit without saving. Corrupt or unsupported files are reported and preserved, including when this prevents saving new readings for the same hour. Hourly files larger than 16 MiB are rejected without replacing their previous checkpoint.
 
 There is no interpolation across startup, failed samples, suspend/resume, clock jumps, or sampling delays longer than 30 seconds. A missing sensor starts a new baseline when it returns. Empty timeline bins remain gaps. Partial bins show coverage; their energy is not extrapolated to a full hour or day. Overlapping timestamps after a restart or clock adjustment are not counted twice.
 
@@ -71,5 +71,3 @@ An administrator can give a dedicated group read access to **only `energy_uj`**,
 ```
 
 Replace `YOUR_USER`, apply your NixOS configuration, and start a fresh login session for group membership to take effect. Restart the permission service if a powercap driver is loaded or reloaded later. peepers starts showing energy after two readable samples. Access is deliberately restricted to the dedicated group because high-resolution energy counters can expose information about other workloads.
-
-This configuration is an optional deployment example; building peepers does not install it.
