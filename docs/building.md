@@ -3,10 +3,10 @@
 ## The shell
 
 ```console
-$ nix-shell
+$ nix-shell       # or, with flakes: nix develop
 ```
 
-[`shell.nix`](../shell.nix) provides `pkg-config`, the libraries peepers draws with (wayland, libxkbcommon and vulkan-loader), `LD_LIBRARY_PATH` pointing at them, and sets `CARGO_TARGET_DIR` to `~/.cache/cargo-target/peepers`, so a build never lands in the checkout.
+[`shell.nix`](../shell.nix), which the flake also exposes as its dev shell, provides `pkg-config`, the libraries peepers draws with (wayland, libxkbcommon and vulkan-loader), `LD_LIBRARY_PATH` pointing at them, and sets `CARGO_TARGET_DIR` to `~/.cache/cargo-target/peepers`, so a build never lands in the checkout.
 
 Outside Nix, install what the [README](../README.md) lists under Requirements, plus `pkg-config`, and make sure the binary can find the libraries at run time.
 

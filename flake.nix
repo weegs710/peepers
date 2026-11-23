@@ -7,12 +7,15 @@
     { nixpkgs, ... }:
     let
       system = "x86_64-linux";
-      peepers = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { };
+      pkgs = nixpkgs.legacyPackages.${system};
+      peepers = pkgs.callPackage ./package.nix { };
     in
     {
       packages.${system} = {
         inherit peepers;
         default = peepers;
       };
+
+      devShells.${system}.default = import ./shell.nix { inherit pkgs; };
     };
 }
