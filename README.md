@@ -107,9 +107,7 @@ To install it, add the flake as an input and the package to your system. It brin
 
 ## Contributing
 
-Fork it and do whatever. Bug fixes and improvements welcome.
-
-Run `cargo fmt --all`, `cargo clippy --workspace --all-targets` and `cargo test --workspace` before sending anything. See [Building and testing](./docs/building.md) for the tests that need a session bus.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
