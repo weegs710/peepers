@@ -254,8 +254,8 @@ mod tests {
 
     #[test]
     fn a_drive_with_nothing_to_report_has_no_concerns() {
-        assert!(Health::Nvme(healthy()).concerns().is_empty());
-        assert!(Health::Ata(sound()).concerns().is_empty());
+        assert_eq!(Health::Nvme(healthy()).concerns(), Vec::<String>::new());
+        assert_eq!(Health::Ata(sound()).concerns(), Vec::<String>::new());
     }
 
     #[test]
@@ -282,7 +282,7 @@ mod tests {
             percent_used: WORN_PERCENT - 1,
             ..healthy()
         };
-        assert!(Health::Nvme(almost).concerns().is_empty());
+        assert_eq!(Health::Nvme(almost).concerns(), Vec::<String>::new());
     }
 
     #[test]
@@ -315,7 +315,7 @@ mod tests {
             self_test: String::new(),
             ..sound()
         };
-        assert!(Health::Ata(silent).concerns().is_empty());
+        assert_eq!(Health::Ata(silent).concerns(), Vec::<String>::new());
     }
 
     fn nvme_name() -> Option<String> {

@@ -219,7 +219,7 @@ mod tests {
         let (_, (id, properties, children)) = menu.get_layout(QUIT, 0, Vec::new());
         assert_eq!(id, QUIT);
         assert_eq!(label(&properties).as_deref(), Some("Quit peepers"));
-        assert!(children.is_empty());
+        assert_eq!(children, Vec::<Value<'static>>::new());
     }
 
     #[test]

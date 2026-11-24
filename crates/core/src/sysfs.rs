@@ -43,7 +43,7 @@ mod tests {
     #[test]
     fn numbered_dirs_ignore_other_names() {
         let found: Vec<_> = numbered_dirs("/sys/devices/system/cpu", "cpu").collect();
-        assert!(!found.is_empty());
+        assert_ne!(found.len(), 0);
         assert!(
             found
                 .iter()

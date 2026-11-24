@@ -242,7 +242,7 @@ mod tests {
             comparisons(&[&slow, &fast]),
             ["Fast computes 4.0x faster and moves memory 2.0x faster than Slow."]
         );
-        assert!(comparisons(&[&fast]).is_empty());
+        assert_eq!(comparisons(&[&fast]), Vec::<String>::new());
     }
 
     #[test]

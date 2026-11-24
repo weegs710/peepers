@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn this_machine_has_a_session_for_this_user() {
         let sessions = read().unwrap();
-        assert!(!sessions.is_empty());
+        assert_ne!(sessions.len(), 0);
         assert!(
             sessions
                 .iter()

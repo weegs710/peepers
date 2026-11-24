@@ -148,7 +148,7 @@ mod tests {
         let entry = Entry::parse(FILE);
         assert!(entry.flag("NoDisplay") && !entry.flag("Hidden"));
         assert_eq!(entry.list("Categories"), ["System", "FileManager"]);
-        assert!(entry.list("Keywords").is_empty());
+        assert_eq!(entry.list("Keywords"), Vec::<String>::new());
     }
 
     #[test]

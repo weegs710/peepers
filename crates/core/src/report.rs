@@ -295,6 +295,6 @@ mod tests {
                 .iter()
                 .any(|(key, value)| key == "Installed" && !value.is_empty())
         );
-        assert!(!report.sections[3].rows.is_empty());
+        assert_ne!(report.sections[3].rows.len(), 0);
     }
 }

@@ -251,7 +251,7 @@ mod tests {
         let mut sampler = Sampler::default();
         sampler.sample().unwrap();
         let usage = sampler.sample().unwrap();
-        assert!(!usage.cores.is_empty());
+        assert_ne!(usage.cores.len(), 0);
         assert!((0.0..=100.0).contains(&usage.usage));
     }
 }

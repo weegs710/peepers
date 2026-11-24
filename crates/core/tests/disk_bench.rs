@@ -38,7 +38,7 @@ fn a_disk_run_measures_everything_and_leaves_nothing_behind() {
     assert!(disk.iops.single > 0 && disk.iops.multi > 0);
     assert!(disk.access.median_us > 0.0 && disk.access.p99_us >= disk.access.median_us);
     assert_eq!((disk.size, disk.parallel), (8 << 20, 16));
-    assert!(!disk.filesystem.is_empty());
+    assert_ne!(disk.filesystem, "");
     assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
 }
 

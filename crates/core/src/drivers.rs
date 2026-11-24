@@ -170,11 +170,9 @@ mod tests {
             ("snd_hda_core", 126_976, State::Live)
         );
         assert_eq!(line.used_by, ["snd_hda_codec", "snd_hda_intel"]);
-        assert!(
-            parse_loaded("ib_core 675840 0 - Live 0x0")
-                .unwrap()
-                .used_by
-                .is_empty()
+        assert_eq!(
+            parse_loaded("ib_core 675840 0 - Live 0x0").unwrap().used_by,
+            Vec::<String>::new()
         );
         assert!(parse_loaded("odd 1 0 - Strange 0x0").is_none());
     }
@@ -198,7 +196,7 @@ mod tests {
         let catalog = parse_catalog(text, Path::new("/m"));
         assert_eq!(catalog["one"].path, Path::new("/m/kernel/a/one.ko.xz"));
         assert_eq!(catalog["one"].depends, ["two_x", "three"]);
-        assert!(catalog["two_x"].depends.is_empty());
+        assert_eq!(catalog["two_x"].depends, Vec::<String>::new());
     }
 
     #[test]

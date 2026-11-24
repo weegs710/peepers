@@ -98,7 +98,7 @@ mod tests {
     fn a_sample_covers_the_whole_machine() {
         let sample = Sampler::default().sample().unwrap();
         assert!(sample.vitals.memory.total > 0);
-        assert!(!sample.vitals.cpu.cores.is_empty());
+        assert_ne!(sample.vitals.cpu.cores.len(), 0);
         assert!(
             sample
                 .processes

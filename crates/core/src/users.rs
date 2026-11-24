@@ -251,7 +251,7 @@ mod tests {
         fs::write(scratch.0.join("a-file"), "").unwrap();
         let _listener = UnixListener::bind(scratch.0.join("io.systemd.Machine")).unwrap();
         assert_eq!(sockets(&scratch.0), [scratch.0.join("io.systemd.Machine")]);
-        assert!(sockets(&scratch.0.join("missing")).is_empty());
+        assert_eq!(sockets(&scratch.0.join("missing")), Vec::<PathBuf>::new());
     }
 
     #[test]

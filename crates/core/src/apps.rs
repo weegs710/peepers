@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn this_session_lists_apps_once_each_in_name_order() {
         let apps = read();
-        assert!(!apps.is_empty());
+        assert_ne!(apps.len(), 0);
         let ids: HashSet<_> = apps.iter().map(|app| &app.id).collect();
         assert_eq!(ids.len(), apps.len());
         assert!(

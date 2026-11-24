@@ -803,14 +803,14 @@ mod tests {
             assert!((actual.x - expected.x).abs() < 0.001);
             assert!((actual.y - expected.y).abs() < 0.001);
         }
-        assert!(
+        assert_eq!(
             segments(
                 &[None, Some(f32::NAN), None],
                 4,
                 100.0,
                 Size::new(300.0, 100.0)
-            )
-            .is_empty()
+            ),
+            Vec::<Vec<Point>>::new()
         );
     }
 

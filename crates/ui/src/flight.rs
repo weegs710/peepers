@@ -744,10 +744,9 @@ mod tests {
         let kept = PathBuf::from("/listed/peepers-a.json");
         flight.files = vec![kept.clone(), PathBuf::from("/listed/peepers-b.json")];
         assert_eq!(flight.listed(&Doomed::One(kept.clone())), [kept]);
-        assert!(
-            flight
-                .listed(&Doomed::One(PathBuf::from("/etc/passwd")))
-                .is_empty()
+        assert_eq!(
+            flight.listed(&Doomed::One(PathBuf::from("/etc/passwd"))),
+            Vec::<PathBuf>::new()
         );
         assert_eq!(flight.listed(&Doomed::All).len(), 2);
     }
