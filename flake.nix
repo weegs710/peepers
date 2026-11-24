@@ -11,16 +11,28 @@
   outputs =
     { nixpkgs, ... }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      peepers = pkgs.callPackage ./package.nix { };
+      inherit (nixpkgs) lib;
+      # every system flakes conventionally expose that peepers can build on (meta.platforms is Linux)
+      forAllSystems =
+        f:
+        lib.genAttrs (lib.intersectLists lib.systems.flakeExposed lib.platforms.linux) (
+          system: f nixpkgs.legacyPackages.${system}
+        );
     in
     {
-      packages.${system} = {
-        inherit peepers;
-        default = peepers;
-      };
+      packages = forAllSystems (
+        pkgs:
+        let
+          peepers = pkgs.callPackage ./package.nix { };
+        in
+        {
+          inherit peepers;
+          default = peepers;
+        }
+      );
 
-      devShells.${system}.default = import ./shell.nix { inherit pkgs; };
+      devShells = forAllSystems (pkgs: {
+        default = import ./shell.nix { inherit pkgs; };
+      });
     };
 }

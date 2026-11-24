@@ -82,7 +82,7 @@ The repository is a flake. Try it without installing anything:
 $ nix run github:weegs710/peepers
 ```
 
-To install it, add the flake as an input and the package to your system. It brings the desktop entry and the icon with it. Prebuilt binaries are in the `peepers` cache on cachix, so the `nix.settings` lines let you download peepers instead of compiling it:
+To install it, add the flake as an input and the package to your system. It brings the desktop entry and the icon with it. Prebuilt x86_64 binaries are in the `peepers` cache on cachix, so the `nix.settings` lines let you download peepers instead of compiling it:
 
 ```nix
 {
@@ -91,14 +91,14 @@ To install it, add the flake as an input and the package to your system. It brin
   outputs = { nixpkgs, peepers, ... }: {
     nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
       modules = [
-        {
-          environment.systemPackages = [ peepers.packages.x86_64-linux.default ];
+        ({ pkgs, ... }: {
+          environment.systemPackages = [ peepers.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           services.udisks2.enable = true; # drive health
           nix.settings = {
             substituters = [ "https://peepers.cachix.org" ];
             trusted-public-keys = [ "peepers.cachix.org-1:rP90IXXdICg4J7eVWuddscdW8QCobU/a945JKWcxWF8=" ];
           };
-        }
+        })
       ];
     };
   };

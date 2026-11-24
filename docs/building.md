@@ -27,7 +27,7 @@ The release profile uses thin LTO, a single codegen unit and strips the binary.
 
 ## The Nix package
 
-[`package.nix`](../package.nix) builds peepers with `rustPlatform.buildRustPackage`, and [`flake.nix`](../flake.nix) exposes it as `packages.x86_64-linux.default`:
+[`package.nix`](../package.nix) builds peepers with `rustPlatform.buildRustPackage`, and [`flake.nix`](../flake.nix) exposes it as `packages.<system>.default` for every Linux system in nixpkgs' `lib.systems.flakeExposed`:
 
 ```console
 $ nix build .#default
