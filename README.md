@@ -82,7 +82,7 @@ The repository is a flake. Try it without installing anything:
 $ nix run github:weegs710/peepers
 ```
 
-To install it, add the flake as an input and the package to your system. It brings the desktop entry and the icon with it. Prebuilt x86_64 binaries are in the `peepers` cache on cachix, so the `nix.settings` lines let you download peepers instead of compiling it:
+To install it, add the flake as an input and the package to your system. It brings the desktop entry and the icon with it. Prebuilt x86_64 and aarch64 binaries are in the `peepers` cache on cachix, so the `nix.settings` lines let you download peepers instead of compiling it:
 
 ```nix
 {

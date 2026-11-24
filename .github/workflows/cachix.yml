@@ -11,7 +11,14 @@ permissions:
 
 jobs:
   cache:
-    runs-on: ubuntu-latest
+    strategy:
+      # one architecture failing still lets the other's build reach the cache
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # the token is an environment secret, so only jobs running on main can read it
     environment: cachix
     if: ${{ github.repository == 'weegs710/peepers' && !github.event.repository.private }}
@@ -24,7 +31,7 @@ jobs:
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build .#default --fallback
 
-  # the cachix branch only ever names a commit whose build is in the cache, so a pin on it always hits
+  # the cachix branch only ever names a commit whose x86_64 and aarch64 builds are both in the cache, so a pin on it always hits
   push:
     needs: cache
     runs-on: ubuntu-latest
