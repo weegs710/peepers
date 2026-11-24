@@ -639,8 +639,12 @@ mod tests {
             bytes: probe.size() + 2 * each + each / 2,
         };
         let mut recorder = Recorder::within(&first, limits);
-        while recorder.record(&first) {
+        // the sleep comes first: a clock as coarse as some arm64 boards' reads no time passing
+        loop {
             std::thread::sleep(Duration::from_millis(2));
+            if !recorder.record(&first) {
+                break;
+            }
         }
         assert_eq!(recorder.frames(), 3);
         assert!(!recorder.record(&first));

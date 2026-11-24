@@ -13,6 +13,8 @@ fn directory(name: &str) -> PathBuf {
 fn recording() -> Trace {
     let vitals = Sampler::default().sample().unwrap().vitals;
     let mut recorder = Recorder::start(&vitals);
+    // a clock as coarse as some arm64 boards' reads no time passing without it, and loading refuses that
+    std::thread::sleep(std::time::Duration::from_millis(2));
     recorder.record(&vitals);
     recorder.finish()
 }
