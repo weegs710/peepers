@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs::{self, DirEntry};
 use std::io;
 use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -161,8 +162,7 @@ impl Sampler {
 
 fn read(entry: &DirEntry) -> Option<(Reading, u32)> {
     let pid = entry.file_name().to_str()?.parse().ok()?;
-    let stat = fs::read_to_string(entry.path().join("stat")).ok()?;
-    let mut reading = parse_stat(pid, &stat)?;
+    let mut reading = parse_stat(pid, &read_stat(&entry.path().join("stat"))?)?;
     reading.moved = fs::read_to_string(entry.path().join("io"))
         .ok()
         .and_then(|io| parse_io(&io));
@@ -178,6 +178,11 @@ fn counter(io: &str, name: &str) -> Option<u64> {
 /// Bytes read from and written to storage, from the contents of an `io` file.
 fn parse_io(io: &str) -> Option<u64> {
     Some(counter(io, "read_bytes:")? + counter(io, "write_bytes:")?)
+}
+
+/// A `stat` file as text. The name in it is whatever bytes the process chose, so it need not be UTF-8.
+fn read_stat(path: &Path) -> Option<String> {
+    Some(String::from_utf8_lossy(&fs::read(path).ok()?).into_owned())
 }
 
 /// Positions of the fields after the closing parenthesis of the name.

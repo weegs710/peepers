@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use rustix::param::clock_ticks_per_second;
 
-use super::{State, parse_stat};
+use super::{State, parse_stat, read_stat};
 use crate::format::bytes;
 use crate::math::{millis, percent};
 
@@ -130,7 +130,7 @@ fn thread_ticks(proc: &str) -> io::Result<HashMap<u32, (String, State, u64)>> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let id = entry.file_name().to_str()?.parse().ok()?;
-            let reading = parse_stat(id, &fs::read_to_string(entry.path().join("stat")).ok()?)?;
+            let reading = parse_stat(id, &read_stat(&entry.path().join("stat"))?)?;
             Some((id, (reading.name, reading.state, reading.ticks)))
         })
         .collect())
