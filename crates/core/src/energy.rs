@@ -17,6 +17,10 @@ pub use store::Store;
 pub const HOUR: u64 = 3600;
 pub const RETENTION: u64 = 90 * 24 * HOUR;
 pub const CPU: &str = "cpu-packages";
+/// Rows one hour keeps. Further entities share one row, so processes that keep renaming
+/// themselves cannot grow the history without bound.
+const MAX_ROWS: usize = 4096;
+const OVERFLOW: &str = "application/row-limit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
@@ -138,6 +142,27 @@ impl Bucket {
             metrics: Metrics::default(),
         });
         row.metrics.merge(metrics);
+    }
+
+    /// Adds a reading as `add` does until the hour has `MAX_ROWS` rows; after that, new entities
+    /// share one row whose times are capped by the hour's, as loading a saved hour requires.
+    fn record(&mut self, entity: &Entity, metrics: &Metrics) {
+        if self.rows.len() < MAX_ROWS || self.rows.contains_key(&entity.id) {
+            self.add(entity, metrics);
+            return;
+        }
+        let overflow = Entity::new(
+            OVERFLOW,
+            "Other processes (row limit reached)",
+            Kind::Application,
+        );
+        self.add(&overflow, metrics);
+        if let Some(row) = self.rows.get_mut(OVERFLOW) {
+            let shared = &mut row.metrics;
+            shared.observed_seconds = shared.observed_seconds.min(self.observed_seconds);
+            shared.measured_seconds = shared.measured_seconds.min(shared.observed_seconds);
+            shared.active_seconds = shared.active_seconds.min(shared.observed_seconds);
+        }
     }
 }
 

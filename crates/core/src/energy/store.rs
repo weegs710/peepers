@@ -173,7 +173,7 @@ impl Store {
                         ),
                         peak_watts: watts,
                     };
-                    bucket.add(&observation.entity, &metrics);
+                    bucket.record(&observation.entity, &metrics);
                 }
                 self.dirty.insert(hour);
             }
@@ -201,6 +201,7 @@ impl Store {
             .ok_or_else(|| {
                 "Energy history is in memory only; storage is unavailable or locked".to_owned()
             })?;
+        let mut oversized = false;
         for hour in self.dirty.clone() {
             if self.blocked.contains(&hour) {
                 continue;
@@ -231,7 +232,9 @@ impl Store {
                 .len()
                 > MAX_FILE_BYTES
             {
-                return Err("An hourly energy record exceeded the 16 MiB file limit; its previous checkpoint was preserved".into());
+                drop(fs::remove_file(&partial));
+                oversized = true;
+                continue;
             }
             writer.get_ref().sync_all().map_err(|e| e.to_string())?;
             fs::rename(&partial, directory.join(format!("{hour}.json")))
@@ -248,6 +251,9 @@ impl Store {
             if file_hour(&entry.path()).is_some_and(|hour| hour < cutoff) {
                 fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
             }
+        }
+        if oversized {
+            return Err("An hourly energy record exceeded the 16 MiB file limit; its previous checkpoint was preserved".into());
         }
         if !self.dirty.is_disjoint(&self.blocked) {
             return Err("An unreadable hourly file was preserved; new readings for that hour could not be saved".into());

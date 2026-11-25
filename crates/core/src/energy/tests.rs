@@ -420,3 +420,52 @@ fn saved_launch_entries_combine_in_rankings_and_timelines_without_rewriting_hist
     }
     assert_eq!(fs::read(directory.0.join("0.json")).unwrap(), original);
 }
+
+fn many(count: usize, name_bytes: usize) -> Vec<Observation> {
+    (0..count)
+        .map(|index| Observation {
+            entity: Entity::new(
+                format!("application/{index}-{}", "x".repeat(name_bytes)),
+                format!("{index}"),
+                Kind::Application,
+            ),
+            watts: Some(1.0),
+            active: true,
+        })
+        .collect()
+}
+
+#[test]
+fn an_hour_holds_a_bounded_number_of_rows_and_still_loads() {
+    let directory = Directory::new();
+    let mut store = Store::open(&directory.0, 7200);
+    store.record(3600.0, 3610.0, &many(5000, 0), &BTreeSet::new());
+    store.record(3610.0, 3620.0, &many(5000, 0), &BTreeSet::new());
+    store.flush().unwrap();
+    let rows = Store::open(&directory.0, 7200).report(1, 3700).rows;
+    assert!(rows.len() <= 4097, "{} rows in one hour", rows.len());
+    let joules: f64 = rows.iter().map(|row| row.metrics.joules).sum();
+    assert_eq!(joules, 2.0 * 5000.0 * 10.0);
+}
+
+#[test]
+fn an_hour_too_big_to_save_does_not_stop_later_hours_saving() {
+    let directory = Directory::new();
+    let mut store = Store::open(&directory.0, 10_800);
+    store.record(3600.0, 3610.0, &many(5000, 8 << 10), &BTreeSet::new());
+    store.record(
+        7200.0,
+        7210.0,
+        &[reading(Some(5.0), true)],
+        &BTreeSet::new(),
+    );
+    assert!(store.flush().is_err());
+    assert!(
+        directory.0.join("7200.json").exists(),
+        "the later hour was not saved"
+    );
+    assert!(
+        !directory.0.join("3600.partial").exists(),
+        "the rejected hour left a partial file"
+    );
+}
