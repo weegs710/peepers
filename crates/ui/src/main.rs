@@ -395,7 +395,7 @@ impl Peepers {
     /// says, and when it says nothing the window asks, because either choice could lose something.
     fn quit(&mut self, fate: Option<Fate>) -> Task<Message> {
         self.asking_to_quit = false;
-        match (fate, self.flight.is_recording()) {
+        match (fate, self.flight.holds_unsaved()) {
             (None, true) => {
                 self.asking_to_quit = true;
                 self.windows.main.reveal()
@@ -771,7 +771,7 @@ impl Peepers {
 fn quit_prompt() -> Element<'static, Message> {
     container(
         row![
-            text("A recording is running. Save it before quitting?").style(text::danger),
+            text("A recording is not saved yet. Save it before quitting?").style(text::danger),
             button("Save and quit")
                 .on_press(Message::Quit(Some(Fate::Save)))
                 .style(button::success),

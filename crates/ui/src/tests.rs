@@ -589,6 +589,43 @@ fn a_recording_that_cannot_be_saved_keeps_the_application_open() {
 }
 
 #[test]
+fn a_recording_that_failed_to_save_is_kept_to_save_again() {
+    let mut app = sampled();
+    update(&mut app, Message::Navigate(Page::Flight));
+    update(&mut app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Flight(flight::Message::Stop)));
+    let failed = Message::Flight(flight::Message::Saved(Err("the disk is full".to_owned())));
+    drop(app.update(failed));
+    assert!(ui(&app).find("Save again").is_ok());
+    assert!(ui(&app).find("Start recording").is_err());
+    drop(app.update(Message::Quit(None)));
+    assert!(app.asking_to_quit, "quitting would lose the recording");
+    click(&mut app, "Keep running");
+    assert!(app.update(Message::Flight(flight::Message::Stop)).units() > 0);
+    let saved = Message::Flight(flight::Message::Saved(Ok("/recordings/a.json".into())));
+    drop(app.update(saved));
+    assert!(ui(&app).find("Start recording").is_ok());
+    assert_eq!(app.update(Message::Quit(None)).units(), 1);
+}
+
+#[test]
+fn a_recording_that_failed_to_save_can_be_deleted_after_asking() {
+    let mut app = sampled();
+    update(&mut app, Message::Navigate(Page::Flight));
+    update(&mut app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Flight(flight::Message::Stop)));
+    drop(app.update(Message::Flight(flight::Message::Saved(Err(
+        "no".to_owned(),
+    )))));
+    click(&mut app, "Delete recording");
+    click(&mut app, "Keep");
+    assert!(ui(&app).find("Save again").is_ok());
+    click(&mut app, "Delete recording");
+    click(&mut app, "Delete");
+    assert!(ui(&app).find("Start recording").is_ok());
+}
+
+#[test]
 fn closing_the_last_window_with_a_recording_running_asks_first() {
     let mut app = sampled();
     update(&mut app, Message::Flight(flight::Message::Start));
@@ -1227,6 +1264,18 @@ fn render_recordings(app: &mut Peepers, directory: &str) {
     assert!(
         snapshot
             .matches_image(format!("{directory}/Flight-List"))
+            .unwrap()
+    );
+    update(app, Message::Flight(flight::Message::Cancel));
+    update(app, Message::Flight(flight::Message::Start));
+    drop(app.update(Message::Flight(flight::Message::Stop)));
+    drop(app.update(Message::Flight(flight::Message::Saved(Err(
+        "No space left on device (os error 28)".to_owned(),
+    )))));
+    let snapshot = ui(app).snapshot(&Theme::Dark).unwrap();
+    assert!(
+        snapshot
+            .matches_image(format!("{directory}/Flight-Unsaved"))
             .unwrap()
     );
 }

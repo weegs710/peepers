@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced::time;
@@ -78,6 +79,8 @@ pub enum Message {
 pub enum Doomed {
     One(PathBuf),
     All,
+    /// The stopped recording that could not be saved.
+    Unsaved,
 }
 
 #[derive(Debug)]
@@ -141,6 +144,10 @@ impl Replay {
 #[derive(Debug)]
 pub struct Flight {
     recorder: Option<Recorder>,
+    /// A stopped recording and the name it is saved under, kept until a save succeeds or it is
+    /// deleted, so that a failed save loses nothing.
+    unsaved: Option<(Arc<Trace>, String)>,
+    saving: bool,
     full: bool,
     directory: String,
     /// The user's name for the recording that is running, which goes into its file name.
@@ -155,6 +162,8 @@ impl Default for Flight {
     fn default() -> Self {
         Self {
             recorder: None,
+            unsaved: None,
+            saving: false,
             full: false,
             directory: storage::default_folder(),
             label: String::new(),
@@ -188,9 +197,15 @@ impl Flight {
         self.recorder.is_some()
     }
 
-    /// Drops the recording that is running, with nothing saved.
+    /// Whether a recording, running or stopped, has not been saved.
+    pub fn holds_unsaved(&self) -> bool {
+        self.recorder.is_some() || self.unsaved.is_some()
+    }
+
+    /// Drops the recording that is running, or one that could not be saved, with nothing saved.
     pub fn discard(&mut self) {
         self.recorder = None;
+        self.unsaved = None;
     }
 
     /// A line for the navigation rail while a recording is running: how long it has run and how
@@ -230,40 +245,19 @@ impl Flight {
                 }
                 _ => return Task::none(),
             },
-            Message::Stop => {
-                if let Some(recorder) = self.recorder.take() {
-                    let trace = recorder.finish();
-                    let stem = stem(&trace, &self.label);
-                    self.label.clear();
-                    let directory = PathBuf::from(&self.directory);
-                    return blocking::run(move || {
-                        trace
-                            .save(&directory, &stem)
-                            .map_err(|error| error.to_string())
-                    })
-                    .map(Message::Saved);
-                }
-            }
-            Message::Saved(result) => {
-                self.notice = Some(match result {
-                    Ok(path) => Notice::success(format!("Saved {}", path.display())),
-                    Err(error) => {
-                        Notice::failure(format!("The recording could not be saved: {error}"))
-                    }
-                });
-                return self.enter();
-            }
+            Message::Stop => return self.stop(),
+            Message::Saved(result) => return self.saved(result),
             Message::Files(files) => self.files = files,
             Message::Label(label) => self.label = label,
             Message::Ask(doomed) => self.doomed = Some(doomed),
             Message::Cancel => self.doomed = None,
-            Message::Confirm => {
-                let paths = self
-                    .doomed
-                    .take()
-                    .map_or_else(Vec::new, |doomed| self.listed(&doomed));
-                return blocking::run(move || remove(&paths)).map(Message::Deleted);
-            }
+            Message::Confirm => match self.doomed.take() {
+                Some(Doomed::Unsaved) => self.unsaved = None,
+                doomed => {
+                    let paths = doomed.map_or_else(Vec::new, |doomed| self.listed(&doomed));
+                    return blocking::run(move || remove(&paths)).map(Message::Deleted);
+                }
+            },
             Message::Deleted(result) => {
                 self.notice = Some(match result {
                     Ok(1) => Notice::success("Deleted 1 recording"),
@@ -314,6 +308,42 @@ impl Flight {
         Task::none()
     }
 
+    /// Stops the recording that is running, if one is, and saves whatever recording is unsaved.
+    fn stop(&mut self) -> Task<Message> {
+        if let Some(recorder) = self.recorder.take() {
+            let trace = recorder.finish();
+            let stem = stem(&trace, &self.label);
+            self.label.clear();
+            self.unsaved = Some((Arc::new(trace), stem));
+        }
+        let Some((trace, stem)) = self.unsaved.clone().filter(|_| !self.saving) else {
+            return Task::none();
+        };
+        self.saving = true;
+        let directory = PathBuf::from(&self.directory);
+        blocking::run(move || {
+            trace
+                .save(&directory, &stem)
+                .map_err(|error| error.to_string())
+        })
+        .map(Message::Saved)
+    }
+
+    fn saved(&mut self, result: Result<PathBuf, String>) -> Task<Message> {
+        self.saving = false;
+        self.notice = Some(match result {
+            Ok(path) => {
+                self.unsaved = None;
+                Notice::success(format!("Saved {}", path.display()))
+            }
+            Err(error) => Notice::failure(format!(
+                "The recording could not be saved: {error}. It is kept: press Save again, in \
+                 another folder if this one is the problem."
+            )),
+        });
+        self.enter()
+    }
+
     /// The files `doomed` stands for that are in the list, so nothing else can be deleted.
     fn listed(&self, doomed: &Doomed) -> Vec<PathBuf> {
         match doomed {
@@ -324,17 +354,34 @@ impl Flight {
                 .cloned()
                 .collect(),
             Doomed::All => self.files.clone(),
+            Doomed::Unsaved => Vec::new(),
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let controls = match &self.recorder {
-            Some(_) => button("Stop and save")
+        let controls: Element<'_, Message> = match (&self.recorder, &self.unsaved) {
+            (Some(_), _) => button("Stop and save")
                 .on_press(Message::Stop)
-                .style(button::danger),
-            None => button("Start recording")
+                .style(button::danger)
+                .into(),
+            (None, Some(_)) if self.saving => button("Saving").style(button::secondary).into(),
+            (None, Some(_)) if self.doomed == Some(Doomed::Unsaved) => {
+                confirmation("Delete this unsaved recording?".to_owned())
+            }
+            (None, Some(_)) => row![
+                button("Save again")
+                    .on_press(Message::Stop)
+                    .style(button::success),
+                button("Delete recording")
+                    .on_press(Message::Ask(Doomed::Unsaved))
+                    .style(button::secondary),
+            ]
+            .spacing(8)
+            .into(),
+            (None, None) => button("Start recording")
                 .on_press(Message::Start)
-                .style(button::success),
+                .style(button::success)
+                .into(),
         };
         let header = row![
             text("Flight recorder").size(24),
