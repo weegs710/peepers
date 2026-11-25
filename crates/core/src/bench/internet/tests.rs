@@ -12,11 +12,21 @@ fn backend() -> Server {
 /// The same, but refusing any upload bigger than `limit` bytes, as a web server with a small
 /// body limit does.
 fn backend_taking(name: &str, limit: u64) -> Server {
+    local(name, limit, None)
+}
+
+/// A server that answers every request with a redirect to `location`.
+fn redirecting(location: &str) -> Server {
+    local("Redirecting", u64::MAX, Some(location.to_owned()))
+}
+
+fn local(name: &str, limit: u64, location: Option<String>) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/backend", listener.local_addr().unwrap());
     thread::spawn(move || {
         for connection in listener.incoming().flatten() {
-            thread::spawn(move || drop(serve(connection, limit)));
+            let location = location.clone();
+            thread::spawn(move || drop(serve(connection, limit, location.as_deref())));
         }
     });
     Server::from(Listed {
@@ -30,7 +40,7 @@ fn backend_taking(name: &str, limit: u64) -> Server {
     })
 }
 
-fn serve(stream: TcpStream, limit: u64) -> io::Result<()> {
+fn serve(stream: TcpStream, limit: u64, location: Option<&str>) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     loop {
@@ -71,6 +81,13 @@ fn serve(stream: TcpStream, limit: u64) -> io::Result<()> {
         if received > limit {
             writer.write_all(
                 b"HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+            )?;
+            continue;
+        }
+        if let Some(location) = location {
+            write!(
+                writer,
+                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
             )?;
             continue;
         }
@@ -183,17 +200,37 @@ fn a_server_picked_by_hand_that_refuses_the_uploads_says_so_before_measuring() {
 }
 
 #[test]
+fn a_redirect_is_not_followed_and_the_server_is_not_used() {
+    let inside = TcpListener::bind("127.0.0.1:0").unwrap();
+    inside.set_nonblocking(true).unwrap();
+    let server = redirecting(&format!(
+        "http://{}/cgi-bin/action?x=1",
+        inside.local_addr().unwrap()
+    ));
+    let error = usable(&server).unwrap_err();
+    nearest(&[server], &AtomicBool::new(false)).ok();
+    assert_eq!(
+        inside.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock,
+        "a redirect was followed"
+    );
+    assert!(error.contains("redirect"), "{error}");
+}
+
+#[test]
 fn a_listed_server_joins_its_addresses_whether_or_not_the_base_ends_in_a_slash() {
-    let listed: Vec<Listed> = serde_json::from_str(
+    let servers = from_list(
         r#"[{"id":106,"name":"Belgrade","server":"https://speedtest1.sox.rs/librespeed/",
               "dlURL":"backend/garbage.php","ulURL":"backend/empty.php",
               "pingURL":"backend/empty.php","getIpURL":"backend/getIP.php",
               "sponsorName":"SOX","sponsorURL":"https://sox.rs"},
              {"id":51,"name":"Amsterdam","server":"https://ams.speedtest.clouvider.net/backend",
+              "dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"},
+             {"id":7,"name":"Plain","server":"http://192.168.1.1/backend",
               "dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}]"#,
     )
     .unwrap();
-    let servers: Vec<Server> = listed.into_iter().map(Server::from).collect();
+    assert_eq!(servers.len(), 2, "a server without https was kept");
     assert_eq!(
         servers[0].download,
         "https://speedtest1.sox.rs/librespeed/backend/garbage.php"

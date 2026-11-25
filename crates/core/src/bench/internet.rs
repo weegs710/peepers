@@ -125,21 +125,41 @@ pub struct Internet {
     pub address: Option<String>,
 }
 
+/// Redirects are not followed, so a listed server cannot send this machine's requests to another
+/// host, such as one on the local network.
+fn agent(timeout: Option<Duration>) -> Agent {
+    Agent::new_with_config(
+        Agent::config_builder()
+            .timeout_global(timeout)
+            .max_redirects(0)
+            .build(),
+    )
+}
+
 /// The servers on the public list, nearest to everyone unsorted.
 ///
 /// # Errors
 ///
 /// Fails when the list cannot be fetched or is not what it should be.
 pub fn servers() -> Result<Vec<Server>, String> {
-    let text = Agent::new_with_defaults()
+    let text = agent(None)
         .get(LIST_URL)
         .call()
         .map_err(|error| format!("The list of servers {}", describe(error)))?
         .into_body()
         .read_to_string()
         .map_err(|error| error.to_string())?;
-    let listed: Vec<Listed> = serde_json::from_str(&text).map_err(|error| error.to_string())?;
-    Ok(listed.into_iter().map(Server::from).collect())
+    from_list(&text)
+}
+
+/// The listed servers reached over https, so that no one on the path can answer for one.
+fn from_list(text: &str) -> Result<Vec<Server>, String> {
+    let listed: Vec<Listed> = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    Ok(listed
+        .into_iter()
+        .filter(|listed| listed.server.starts_with("https://"))
+        .map(Server::from)
+        .collect())
 }
 
 /// Measures against `server`, or against whichever of the public servers answers fastest.
@@ -167,11 +187,7 @@ fn measure(
         stage("Checking the server");
         first_usable(&ranked, stop)?
     };
-    let agent = Agent::new_with_config(
-        Agent::config_builder()
-            .timeout_global(Some(PING_TIMEOUT))
-            .build(),
-    );
+    let agent = agent(Some(PING_TIMEOUT));
     let (address, isp) = who_am_i(&agent, &server);
 
     stage("Measuring latency and jitter");
@@ -233,25 +249,34 @@ fn describe(error: ureq::Error) -> String {
 /// Whether the server takes the requests the test makes, found out by making one of each, so
 /// that a server which caps upload sizes or is down is passed over before anything is measured.
 fn usable(server: &Server) -> Result<(), String> {
-    let agent = Agent::new_with_config(
-        Agent::config_builder()
-            .timeout_global(Some(CHECK_TIMEOUT))
-            .build(),
-    );
+    let agent = agent(Some(CHECK_TIMEOUT));
     let upload = SendBody::from_owned_reader(io::repeat(0).take(UPLOAD_REQUEST as u64));
-    agent
+    let uploaded = agent
         .post(format!("{}?r={}", server.upload, nonce()))
         .send(upload)
         .map_err(|error| format!("{} {} for an upload", server.name, describe(error)))?;
-    let mut body = agent
+    not_moved(server, uploaded.status(), "an upload")?;
+    let downloaded = agent
         .get(format!("{}?ckSize=1&r={}", server.download, nonce()))
         .call()
-        .map_err(|error| format!("{} {} for a download", server.name, describe(error)))?
-        .into_body()
-        .into_reader();
+        .map_err(|error| format!("{} {} for a download", server.name, describe(error)))?;
+    not_moved(server, downloaded.status(), "a download")?;
+    let mut body = downloaded.into_body().into_reader();
     io::copy(&mut body, &mut io::sink())
         .map(drop)
         .map_err(|error| format!("{}: {error}", server.name))
+}
+
+/// A redirect is refused here rather than followed, so that a server which moved is passed over.
+fn not_moved(server: &Server, status: ureq::http::StatusCode, request: &str) -> Result<(), String> {
+    if status.is_redirection() {
+        return Err(format!(
+            "{} answered HTTP {} for {request}, a redirect, which is not followed",
+            server.name,
+            status.as_u16()
+        ));
+    }
+    Ok(())
 }
 
 /// The first of the nearest servers that takes the test's requests.
@@ -308,11 +333,7 @@ fn pings(
 
 /// The servers that answer, soonest first, found by asking every server at once.
 fn nearest(servers: &[Server], stop: &AtomicBool) -> Result<Vec<Server>, String> {
-    let agent = Agent::new_with_config(
-        Agent::config_builder()
-            .timeout_global(Some(PING_TIMEOUT))
-            .build(),
-    );
+    let agent = agent(Some(PING_TIMEOUT));
     let times: Vec<Option<f32>> = thread::scope(|scope| {
         let probes: Vec<_> = servers
             .iter()
@@ -428,7 +449,7 @@ impl Transfers<'_> {
     }
 
     fn download(&self, streams: usize, loaded: bool) -> Result<Transfer, String> {
-        let agent = Agent::new_with_defaults();
+        let agent = agent(None);
         let url = format!("{}?ckSize={DOWNLOAD_REQUEST_MIB}", self.server.download);
         self.run(
             streams,
@@ -457,7 +478,7 @@ impl Transfers<'_> {
     }
 
     fn upload(&self, streams: usize, loaded: bool) -> Result<Transfer, String> {
-        let agent = Agent::new_with_defaults();
+        let agent = agent(None);
         self.run(streams, self.plan.upload_grace, loaded, |sent, deadline| {
             while Instant::now() < deadline {
                 check(self.stop)?;
@@ -535,11 +556,7 @@ impl Transfers<'_> {
 
     /// The median round trip, from a connection of its own, until `deadline`.
     fn loaded_pings(&self, deadline: Instant) -> Option<f32> {
-        let agent = Agent::new_with_config(
-            Agent::config_builder()
-                .timeout_global(Some(PING_TIMEOUT))
-                .build(),
-        );
+        let agent = agent(Some(PING_TIMEOUT));
         let mut answered = Vec::new();
         while Instant::now() < deadline && check(self.stop).is_ok() {
             answered.extend(ping(&agent, &self.server.ping));

@@ -56,7 +56,7 @@ A task manager has to look at some files that sound alarming out of context. Her
 
 peepers never opens `/etc/shadow`, and never reads a process's `environ`, `mem` or `maps`.
 
-The only connection peepers opens is the internet benchmark's, to the server list at `librespeed.org` and the servers it names, and only when asked for. Nothing above is sent.
+The only connection peepers opens is the internet benchmark's, to the server list at `librespeed.org` and the servers it names over https, and only when asked for. It does not follow redirects. Nothing above is sent.
 
 ## What it needs a bus for
 
