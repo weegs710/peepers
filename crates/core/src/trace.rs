@@ -4,6 +4,8 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use rustix::fs::{CWD, RenameFlags, renameat_with};
+use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 
 use crate::network::Kind;
@@ -426,30 +428,38 @@ impl Trace {
     }
 
     /// Writes the trace to `<stem>.json` in `directory`, or to the first of `<stem>-2.json`,
-    /// `<stem>-3.json` and so on that is free, so that no recording replaces another.
+    /// `<stem>-3.json` and so on that is free, so that no recording replaces another. Each name is
+    /// taken atomically, so a file another user planted at one is stepped over and left alone.
     ///
     /// # Errors
     ///
     /// Fails when the directory cannot be created or written.
     pub fn save(&self, directory: &Path, stem: &str) -> io::Result<PathBuf> {
         fs::create_dir_all(directory)?;
-        let path = (1..=u32::MAX)
-            .map(|attempt| match attempt {
+        let names = || {
+            (1..=u32::MAX).map(|attempt| match attempt {
                 1 => directory.join(format!("{stem}.json")),
                 _ => directory.join(format!("{stem}-{attempt}.json")),
             })
-            .find(|path| !path.exists())
-            .ok_or(io::ErrorKind::AlreadyExists)?;
-        let partial = path.with_extension("json.partial");
-        let mut writer = BufWriter::new(File::create_new(&partial)?);
-        serde_json::to_writer(&mut writer, self).map_err(io::Error::from)?;
-        writer.flush()?;
-        if path.exists() {
-            fs::remove_file(&partial)?;
-            return Err(io::ErrorKind::AlreadyExists.into());
+        };
+        let (partial, file) = names()
+            .map(|path| path.with_extension("json.partial"))
+            .find_map(|partial| match File::create_new(&partial) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                created => Some(created.map(|file| (partial, file))),
+            })
+            .unwrap_or_else(|| Err(io::ErrorKind::AlreadyExists.into()))?;
+        let saved = self.write(file).and_then(|()| publish(&partial, names()));
+        if saved.is_err() {
+            drop(fs::remove_file(&partial));
         }
-        fs::rename(&partial, &path)?;
-        Ok(path)
+        saved
+    }
+
+    fn write(&self, file: File) -> io::Result<()> {
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, self).map_err(io::Error::from)?;
+        writer.flush()
     }
 
     /// # Errors
@@ -463,6 +473,23 @@ impl Trace {
         trace.validate()?;
         Ok(trace)
     }
+}
+
+/// Renames `partial` to the first of `names` that is free, never over one that is taken.
+fn publish(partial: &Path, mut names: impl Iterator<Item = PathBuf>) -> io::Result<PathBuf> {
+    names
+        .find_map(
+            |path| match renameat_with(CWD, partial, CWD, &path, RenameFlags::NOREPLACE) {
+                Ok(()) => Some(Ok(path)),
+                Err(Errno::EXIST) => None,
+                // A filesystem without the flag gets a check first, which another process could race.
+                Err(Errno::INVAL) => fs::symlink_metadata(&path)
+                    .is_err()
+                    .then(|| fs::rename(partial, &path).map(|()| path)),
+                Err(error) => Some(Err(error.into())),
+            },
+        )
+        .unwrap_or_else(|| Err(io::ErrorKind::AlreadyExists.into()))
 }
 
 #[derive(Debug)]

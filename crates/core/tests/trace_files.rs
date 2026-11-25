@@ -78,3 +78,24 @@ fn files_that_are_not_recordings_are_refused() {
         Err(LoadError::Io(_))
     ));
 }
+
+#[test]
+fn files_planted_at_the_names_a_save_would_use_are_stepped_over_and_left_alone() {
+    let directory = directory("planted");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("run.json.partial"), "planted").unwrap();
+    std::os::unix::fs::symlink(directory.join("absent"), directory.join("run.json")).unwrap();
+    let trace = recording();
+    let path = trace.save(&directory, "run").unwrap();
+    assert_eq!(path.file_name().unwrap(), "run-2.json");
+    assert_eq!(Trace::load(&path).unwrap(), trace);
+    assert_eq!(
+        fs::read_to_string(directory.join("run.json.partial")).unwrap(),
+        "planted"
+    );
+    assert!(
+        fs::symlink_metadata(directory.join("run.json"))
+            .unwrap()
+            .is_symlink()
+    );
+}
