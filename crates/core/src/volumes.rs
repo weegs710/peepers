@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 use rustix::fs::statvfs;
@@ -32,7 +34,7 @@ impl Volume {
 /// One entry of `/proc/self/mountinfo`.
 struct Mount {
     device: String,
-    root: String,
+    root: PathBuf,
     point: PathBuf,
     filesystem: String,
     source: String,
@@ -44,12 +46,11 @@ struct Mount {
 #[must_use]
 pub fn read() -> Vec<Volume> {
     let mut seen = HashSet::new();
-    fs::read_to_string("/proc/self/mountinfo")
-        .unwrap_or_default()
-        .lines()
-        .filter_map(parse_mount)
+    parse(&mountinfo())
         .filter(|mount| {
-            mount.root == "/" && !plumbing(&mount.point) && seen.insert(mount.device.clone())
+            mount.root == Path::new("/")
+                && !plumbing(&mount.point)
+                && seen.insert(mount.device.clone())
         })
         .filter_map(|mount| {
             let stat = statvfs(&mount.point).ok()?;
@@ -77,16 +78,22 @@ pub struct Backing {
 #[must_use]
 pub fn backing(path: &Path) -> Option<Backing> {
     let path = fs::canonicalize(path).ok()?;
-    deepest(
-        &fs::read_to_string("/proc/self/mountinfo").unwrap_or_default(),
-        &path,
-    )
+    deepest(parse(&mountinfo()), &path)
 }
 
-fn deepest(mountinfo: &str, path: &Path) -> Option<Backing> {
+/// Paths and sources are whatever bytes the mounter chose, so the table need not be UTF-8.
+fn mountinfo() -> Vec<u8> {
+    fs::read("/proc/self/mountinfo").unwrap_or_default()
+}
+
+fn parse(mountinfo: &[u8]) -> impl Iterator<Item = Mount> {
     mountinfo
-        .lines()
+        .split(|&byte| byte == b'\n')
         .filter_map(parse_mount)
+}
+
+fn deepest(mounts: impl Iterator<Item = Mount>, path: &Path) -> Option<Backing> {
+    mounts
         .filter(|mount| path.starts_with(&mount.point))
         .max_by_key(|mount| mount.point.components().count())
         .map(|mount| Backing {
@@ -104,23 +111,37 @@ fn plumbing(point: &Path) -> bool {
 }
 
 /// `id parent major:minor root mount options [tags...] - filesystem source super-options`
-fn parse_mount(line: &str) -> Option<Mount> {
-    let (head, tail) = line.split_once(" - ")?;
-    let mut head = head.split_ascii_whitespace().skip(2);
-    let mut tail = tail.split_ascii_whitespace();
+fn parse_mount(line: &[u8]) -> Option<Mount> {
+    let separator = line.windows(3).position(|window| window == b" - ")?;
+    let mut head = fields(&line[..separator]).skip(2);
+    let mut tail = fields(&line[separator + 3..]);
     Some(Mount {
-        device: head.next()?.to_owned(),
-        root: unescape(head.next()?),
-        point: PathBuf::from(unescape(head.next()?)),
-        filesystem: tail.next()?.to_owned(),
-        source: tail.next()?.to_owned(),
+        device: text(head.next()?),
+        root: path(head.next()?),
+        point: path(head.next()?),
+        filesystem: text(tail.next()?),
+        source: text(tail.next()?),
     })
 }
 
+fn fields(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    bytes
+        .split(u8::is_ascii_whitespace)
+        .filter(|field| !field.is_empty())
+}
+
+fn text(field: &[u8]) -> String {
+    String::from_utf8_lossy(field).into_owned()
+}
+
+fn path(field: &[u8]) -> PathBuf {
+    PathBuf::from(OsString::from_vec(unescape(field)))
+}
+
 /// The kernel writes spaces, tabs, newlines and backslashes in paths as `\040`-style octal.
-fn unescape(path: &str) -> String {
+fn unescape(path: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(path.len());
-    let mut rest = path.as_bytes();
+    let mut rest = path;
     while let Some((&byte, tail)) = rest.split_first() {
         let octal = (byte == b'\\')
             .then(|| tail.get(..3))
@@ -134,7 +155,7 @@ fn unescape(path: &str) -> String {
             rest = tail;
         }
     }
-    String::from_utf8_lossy(&bytes).into_owned()
+    bytes
 }
 
 #[cfg(test)]
@@ -144,9 +165,10 @@ mod tests {
     #[test]
     fn mount_lines_split_around_the_separator() {
         let mount =
-            parse_mount("47 41 0:35 / /persist rw,noatime shared:6 - zfs zroot/persist rw,xattr")
+            parse_mount(b"47 41 0:35 / /persist rw,noatime shared:6 - zfs zroot/persist rw,xattr")
                 .unwrap();
-        assert_eq!((mount.device.as_str(), mount.root.as_str()), ("0:35", "/"));
+        assert_eq!(mount.device, "0:35");
+        assert_eq!(mount.root, PathBuf::from("/"));
         assert_eq!(mount.point, PathBuf::from("/persist"));
         assert_eq!(
             (mount.filesystem.as_str(), mount.source.as_str()),
@@ -156,11 +178,12 @@ mod tests {
 
     #[test]
     fn a_folder_is_stored_on_the_deepest_mount_that_contains_it() {
-        let mountinfo = "\
+        let mountinfo = b"\
 20 1 0:20 / / rw - tmpfs tmpfs rw\n\
 47 20 0:35 / /persist rw - zfs zroot/persist rw\n\
 48 20 0:35 /home/weegs/.claude /home/weegs/.claude rw - zfs zroot/persist[/home/weegs/.claude] rw\n";
-        let on = |path| deepest(mountinfo, Path::new(path)).map(|b| (b.filesystem, b.source));
+        let on =
+            |path| deepest(parse(mountinfo), Path::new(path)).map(|b| (b.filesystem, b.source));
         assert_eq!(
             on("/home/weegs/notes"),
             Some(("tmpfs".into(), "tmpfs".into()))
@@ -173,6 +196,20 @@ mod tests {
             on("/home/weegs/.claude/x"),
             Some(("zfs".into(), "zroot/persist[/home/weegs/.claude]".into()))
         );
+    }
+
+    #[test]
+    fn a_mount_whose_path_is_not_utf8_keeps_its_bytes_and_every_other_mount() {
+        use std::os::unix::ffi::OsStrExt;
+        let mountinfo = b"\
+20 1 0:20 / / rw - tmpfs tmpfs rw\n\
+61 20 0:61 / /mnt/odd\xff\\040name rw - fuse.sshfs host:\xff rw\n\
+47 20 0:35 / /persist rw - zfs zroot/persist rw\n";
+        let mounts: Vec<Mount> = parse(mountinfo).collect();
+        assert_eq!(mounts.len(), 3);
+        assert_eq!(mounts[1].point.as_os_str().as_bytes(), b"/mnt/odd\xff name");
+        assert_eq!(mounts[1].source, "host:\u{fffd}");
+        assert_eq!(mounts[2].point, PathBuf::from("/persist"));
     }
 
     #[test]
@@ -193,9 +230,9 @@ mod tests {
 
     #[test]
     fn octal_escapes_become_characters() {
-        assert_eq!(unescape(r"/mnt/my\040disk"), "/mnt/my disk");
-        assert_eq!(unescape(r"/odd\134name"), r"/odd\name");
-        assert_eq!(unescape(r"/trailing\04"), r"/trailing\04");
+        assert_eq!(unescape(br"/mnt/my\040disk"), b"/mnt/my disk");
+        assert_eq!(unescape(br"/odd\134name"), br"/odd\name");
+        assert_eq!(unescape(br"/trailing\04"), br"/trailing\04");
     }
 
     #[test]
