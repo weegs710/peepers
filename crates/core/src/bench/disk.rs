@@ -1,11 +1,11 @@
 use std::fs::{self, File};
-use std::os::unix::fs::{FileExt, OpenOptionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rustix::fs::{Advice, OFlags, fadvise, statvfs};
+use rustix::fs::{Advice, OFlags, fadvise, fcntl_getfl, fcntl_setfl, statvfs};
 use serde::{Deserialize, Serialize};
 
 use super::{Pair, check};
@@ -62,12 +62,19 @@ pub struct Disk {
     pub parallel: usize,
 }
 
-/// Removes the benchmark file however the run ends.
-struct TestFile(PathBuf);
+/// The benchmark file, removed however the run ends unless its name has come to mean another file.
+struct TestFile {
+    path: PathBuf,
+    file: File,
+}
 
 impl Drop for TestFile {
     fn drop(&mut self) {
-        drop(fs::remove_file(&self.0));
+        if let (Ok(named), Ok(open)) = (fs::symlink_metadata(&self.path), self.file.metadata())
+            && (named.dev(), named.ino()) == (open.dev(), open.ino())
+        {
+            drop(fs::remove_file(&self.path));
+        }
     }
 }
 
@@ -117,23 +124,25 @@ pub(super) fn run(
         .map_or("unknown", |b| b.filesystem.as_str());
 
     let path = directory.join(FILE_NAME);
-    let buffered = File::options()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    let _cleanup = TestFile(path.clone());
+    let test = TestFile {
+        file: File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?,
+        path,
+    };
+    let file = &test.file;
     let mut pool = Aligned::new(POOL_BLOCKS * BLOCK);
     fill(pool.as_mut_slice());
-    let direct = open_direct(&path, &pool.as_slice()[..BLOCK]);
-    let file = direct.as_ref().unwrap_or(&buffered);
+    let direct = direct(file, &pool.as_slice()[..BLOCK]);
 
     stage("Writing test file");
     let write = timed(size, || write_file(file, size, &pool, stop))?;
-    if direct.is_none() {
+    if !direct {
         // Pages the kernel still holds would make the read-back measure memory, not the disk.
-        fadvise(&buffered, 0, None, Advice::DontNeed).map_err(|error| error.to_string())?;
+        fadvise(file, 0, None, Advice::DontNeed).map_err(|error| error.to_string())?;
     }
     stage("Reading test file");
     let read = timed(size, || read_file(file, size, stop))?;
@@ -149,7 +158,7 @@ pub(super) fn run(
             .map_or_else(String::new, |b| b.source.clone()),
         medium: medium(filesystem),
         size,
-        direct: direct.is_some(),
+        direct,
         write,
         read,
         access: access(single.latencies),
@@ -169,17 +178,20 @@ fn medium(filesystem: &str) -> Medium {
     }
 }
 
-/// Reopens the file around the system's caches, if the filesystem allows that for a real write.
-fn open_direct(path: &Path, probe: &[u8]) -> Option<File> {
-    let flag = i32::try_from(OFlags::DIRECT.bits()).ok()?;
-    let file = File::options()
-        .read(true)
-        .write(true)
-        .custom_flags(flag)
-        .open(path)
-        .ok()?;
-    file.write_all_at(probe, 0).ok()?;
-    Some(file)
+/// Sends the open file's I/O around the system's caches, if the filesystem allows that for a real
+/// write. The handle is changed rather than the name reopened, which another user could swap first.
+fn direct(file: &File, probe: &[u8]) -> bool {
+    let Ok(flags) = fcntl_getfl(file) else {
+        return false;
+    };
+    if fcntl_setfl(file, flags | OFlags::DIRECT).is_err() {
+        return false;
+    }
+    if file.write_all_at(probe, 0).is_ok() {
+        return true;
+    }
+    let _ = fcntl_setfl(file, flags);
+    false
 }
 
 /// Bytes per second moved by `work`.
@@ -340,6 +352,46 @@ mod tests {
         assert!((percentile(&sorted, 0.5) - 51.0).abs() < 1.0);
         assert!((percentile(&sorted, 0.99) - 99.0).abs() < 1.5);
         assert!(percentile(&[], 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn writes_stay_on_the_created_file_when_its_name_is_swapped_for_a_link() {
+        let directory =
+            std::env::temp_dir().join(format!("peepers-disk-swap-{}", std::process::id()));
+        drop(fs::remove_dir_all(&directory));
+        fs::create_dir_all(&directory).unwrap();
+        let (path, victim, link) = (
+            directory.join(FILE_NAME),
+            directory.join("victim"),
+            directory.join("link"),
+        );
+        let test = TestFile {
+            file: File::options()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap(),
+            path: path.clone(),
+        };
+        fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        fs::rename(&link, &path).unwrap();
+        let mut pool = Aligned::new(POOL_BLOCKS * BLOCK);
+        fill(pool.as_mut_slice());
+        direct(&test.file, &pool.as_slice()[..BLOCK]);
+        write_file(&test.file, 2 * BLOCK as u64, &pool, &AtomicBool::new(false)).unwrap();
+        assert_eq!(test.file.metadata().unwrap().len(), 2 * BLOCK as u64);
+        drop(test);
+        assert!(
+            fs::read(&victim).unwrap() == b"keep",
+            "the linked file was written"
+        );
+        assert!(
+            fs::symlink_metadata(&path).unwrap().is_symlink(),
+            "the swapped-in link was removed"
+        );
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
