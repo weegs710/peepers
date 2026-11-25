@@ -116,9 +116,13 @@ pub fn read() -> io::Result<Vec<Connection>> {
                 .filter_map(|line| parse_inet(protocol, line)),
         );
     }
-    let unix = fs::read_to_string("/proc/net/unix")?;
-    connections.extend(unix.lines().skip(1).filter_map(parse_unix));
+    connections.extend(unix_table()?.lines().skip(1).filter_map(parse_unix));
     Ok(connections)
+}
+
+/// Socket names are whatever bytes the binding process chose, so the table need not be UTF-8.
+fn unix_table() -> io::Result<String> {
+    Ok(String::from_utf8_lossy(&fs::read("/proc/net/unix")?).into_owned())
 }
 
 /// `sl local remote state tx:rx tr:when retransmit uid timeout inode ...`
@@ -350,13 +354,26 @@ mod tests {
                 );
             }
         }
-        let unix = fs::read_to_string("/proc/net/unix").unwrap();
-        for line in unix.lines().skip(1) {
+        for line in unix_table().unwrap().lines().skip(1) {
             assert!(
                 parse_unix(line).is_some(),
                 "failed to parse /proc/net/unix row: {line}"
             );
         }
+    }
+
+    #[test]
+    fn a_socket_name_that_is_not_utf8_keeps_every_other_socket() {
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixListener};
+        let name = SocketAddr::from_abstract_name(b"peepers-test-\xff").unwrap();
+        let _odd = UnixListener::bind_addr(&name).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let local = Endpoint::Address(listener.local_addr().unwrap());
+        let connections = read().unwrap();
+        assert!(connections.iter().any(|c| c.local == local));
+        assert!(connections.iter().any(|c| matches!(&c.local,
+            Endpoint::Path(path) if path == "@peepers-test-\u{fffd}")));
     }
 
     #[test]
