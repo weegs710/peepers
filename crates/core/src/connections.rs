@@ -4,6 +4,8 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 
+mod unix;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Protocol {
     Tcp,
@@ -116,13 +118,8 @@ pub fn read() -> io::Result<Vec<Connection>> {
                 .filter_map(|line| parse_inet(protocol, line)),
         );
     }
-    connections.extend(unix_table()?.lines().skip(1).filter_map(parse_unix));
+    connections.extend(unix::read()?);
     Ok(connections)
-}
-
-/// Socket names are whatever bytes the binding process chose, so the table need not be UTF-8.
-fn unix_table() -> io::Result<String> {
-    Ok(String::from_utf8_lossy(&fs::read("/proc/net/unix")?).into_owned())
 }
 
 /// `sl local remote state tx:rx tr:when retransmit uid timeout inode ...`
@@ -139,45 +136,6 @@ fn parse_inet(protocol: Protocol, line: &str) -> Option<Connection> {
         uid: Some(uid.parse().ok()?),
         inode: inode.parse().ok()?,
     })
-}
-
-/// `num refcount protocol flags type state inode [path]`
-fn parse_unix(line: &str) -> Option<Connection> {
-    let mut rest = line;
-    let [_, _, _, Some(flags), Some(kind), Some(state), Some(inode)] =
-        [(); 7].map(|()| token(&mut rest))
-    else {
-        return None;
-    };
-    let listening = u32::from_str_radix(flags, 16).ok()? & ACCEPTING != 0;
-    Some(Connection {
-        protocol: match kind {
-            "0001" => Protocol::UnixStream,
-            "0002" => Protocol::UnixDatagram,
-            _ => Protocol::UnixSeqPacket,
-        },
-        local: match rest.trim() {
-            "" => Endpoint::None,
-            path => Endpoint::Path(path.to_owned()),
-        },
-        remote: Endpoint::None,
-        state: unix_state(u8::from_str_radix(state, 16).ok()?, listening),
-        uid: None,
-        inode: inode.parse().ok()?,
-    })
-}
-
-/// `SO_ACCEPTCON`: set in the flags of a listening socket.
-const ACCEPTING: u32 = 0x1_0000;
-
-/// Splits the next whitespace-delimited token off `rest`; what remains keeps its own spacing.
-fn token<'a>(rest: &mut &'a str) -> Option<&'a str> {
-    let trimmed = rest.trim_start();
-    let (token, tail) = trimmed
-        .split_once(char::is_whitespace)
-        .unwrap_or((trimmed, ""));
-    *rest = tail;
-    (!token.is_empty()).then_some(token)
 }
 
 /// `0100007F:0035`: the address as the kernel stores it, so little-endian words, then the port.
@@ -214,17 +172,6 @@ fn inet_state(code: u8) -> State {
         0x09 => State::LastAck,
         0x0a => State::Listen,
         0x0b => State::Closing,
-        _ => State::Closed,
-    }
-}
-
-/// `SS_UNCONNECTED`, `SS_CONNECTING`, `SS_CONNECTED`, `SS_DISCONNECTING`.
-fn unix_state(code: u8, listening: bool) -> State {
-    match (code, listening) {
-        (_, true) => State::Listen,
-        (2, false) => State::SynSent,
-        (3, false) => State::Established,
-        (4, false) => State::Closing,
         _ => State::Closed,
     }
 }
@@ -308,22 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn unix_lines_with_and_without_a_path() {
-        let named = "0000000000000000: 00000002 00000000 00010000 0001 01 20347 /nix/var/nix/daemon-socket/socket";
-        let connection = parse_unix(named).unwrap();
-        assert_eq!(connection.state, State::Listen);
-        assert_eq!(
-            connection.local,
-            Endpoint::Path("/nix/var/nix/daemon-socket/socket".to_owned())
-        );
-        let unnamed =
-            parse_unix("0000000000000000: 00000003 00000000 00000000 0001 03 15338415").unwrap();
-        assert_eq!(unnamed.state, State::Established);
-        assert_eq!(unnamed.local, Endpoint::None);
-        assert_eq!(unnamed.exposure(), None);
-    }
-
-    #[test]
     fn exposure_classifies_by_address() {
         let exposure = |text: &str| super::exposure(text.parse().unwrap());
         assert_eq!(exposure("0.0.0.0"), Exposure::AllInterfaces);
@@ -354,12 +285,6 @@ mod tests {
                 );
             }
         }
-        for line in unix_table().unwrap().lines().skip(1) {
-            assert!(
-                parse_unix(line).is_some(),
-                "failed to parse /proc/net/unix row: {line}"
-            );
-        }
     }
 
     #[test]
@@ -374,6 +299,28 @@ mod tests {
         assert!(connections.iter().any(|c| c.local == local));
         assert!(connections.iter().any(|c| matches!(&c.local,
             Endpoint::Path(path) if path == "@peepers-test-\u{fffd}")));
+    }
+
+    #[test]
+    fn a_newline_in_a_socket_name_cannot_forge_another_socket() {
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixListener};
+        let name = b"peepers-forge\n0000000000000000: 00000002 00000000 00010000 0001 01 4242 /peepers-forged";
+        let _forger =
+            UnixListener::bind_addr(&SocketAddr::from_abstract_name(name).unwrap()).unwrap();
+        let connections = read().unwrap();
+        assert!(
+            !connections
+                .iter()
+                .any(|c| c.local == Endpoint::Path("/peepers-forged".to_owned())),
+            "a forged row was listed"
+        );
+        let whole = format!("@{}", String::from_utf8_lossy(name));
+        assert!(
+            connections
+                .iter()
+                .any(|c| c.local == Endpoint::Path(whole.clone()))
+        );
     }
 
     #[test]
