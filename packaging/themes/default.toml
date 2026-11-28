@@ -1,0 +1,364 @@
+# Peepers default theme — complete colour option map.
+# Copy to ~/.config/peepers/themes/default.toml, then choose
+# Settings → Theme → Custom: default. Edits reload once a second.
+# Uncomment only the overrides you want. For a new table, uncomment its
+# [table.header] AND its values. Keep keys under the correct table header.
+# Only base is enabled: this file initially looks exactly like the built-in Dark theme.
+# Commented colours are example overrides, not the generated default values.
+# Omitted values inherit the palette or a less-specific override.
+# Colours: #RRGGBB or #RRGGBBAA (00 alpha = invisible, FF = opaque).
+# See docs/themes.md for inheritance rules and the full written reference.
+
+# --- Base palette ------------------------------------------------------------
+# base accepts any built-in theme name. Without base, mode is dark or light.
+# Noctalia aliases: background = surface; text = on_surface; danger = error.
+# Use only one spelling for each role.
+# mode = "dark"
+base = "Dark"
+# background = "#10081F"
+# text = "#F6E7FF"
+# primary = "#FF39C8"
+# success = "#B66BFF"
+# warning = "#49E9FF"
+# danger = "#FF547D"
+
+# --- Interface roles ---------------------------------------------------------
+# [ui]
+# heading = "#FF39C8"           # Page and detail titles
+# section_heading = "#DCA6FF"   # Sections and graph/card titles
+# table_heading = "#DCA6FF"     # Sortable column headings and their arrows
+# secondary_text = "#BCA6CF"    # Muted explanatory text
+# label = "#BCA6CF"             # Captions over statistics
+# border = "#513166"            # Rounded/bordered panel outlines
+# value = "#F6E7FF"           # Statistics and device-card values
+# success_text = "#B66BFF"    # Explicit success messages
+# danger_text = "#FF547D"     # Explicit error messages
+# icon = "#F6E7FF"            # Navigation icons
+# selected_icon = "#10081F"   # Selected navigation icon
+# row_hover = "#302045"       # Table row under the pointer
+# row_selected = "#513166"    # Selected table row
+# panel = "#1D1030"           # Rounded/bordered panels
+# panel_text = "#F6E7FF"      # Text inherited from panels
+# tooltip = "#1D1030"         # Graph tooltip background
+# tooltip_text = "#F6E7FF"    # Graph tooltip text
+# separator = "#513166"       # Table separators and horizontal rules
+
+# --- Defaults for ALL graphs -------------------------------------------------
+# [graph]
+# primary = "#FF39C8"           # Usual single-line series
+# success = "#B66BFF"           # Usually disk reads / network receives
+# warning = "#49E9FF"           # Usually disk writes / network sends / GPU memory
+# grid = "#51316680"            # Horizontal gridlines
+# axis = "#BCA6CF"              # Scale labels
+# background = "#10081F"      # Plot background; otherwise transparent
+# legend = "#F6E7FF"          # Tooltip text; overrides ui.tooltip_text
+# tooltip = "#1D1030"         # Tooltip background; overrides ui.tooltip
+# crosshair = "#F6E7FF66"     # Vertical hover cursor
+# marker = "#FF547D"          # Flight recorder playback cursor
+# color = "#FF39C8"           # Base colour for every line; overrides role colours
+# stroke = "#FF39C8"          # Exact line stroke, independent of fill/glow
+# fill = "#FF39C82E"          # Area under the line
+# glow = "#FF39C8"            # Glow colour; renderer softens its opacity
+# point = "#F6E7FF"           # Hover dots; otherwise follow the stroke
+
+# --- Individual graphs and lines ---------------------------------------------
+# Every line table below accepts: color, stroke, fill, glow, point,
+# primary, success, warning. Usually color is all you need.
+# Explicit part colours (stroke/fill/glow/point) override derived colours.
+# Use #00000000 for fill or glow to hide that part.
+# Graph-wide tables also accept every key shown in [graph].
+# Performance cards, details and the popout share these graph keys.
+
+# Disk throughput: read and write are separate series.
+# [graphs."disk.io".lines.read]
+# color = "#B66BFF"
+# stroke = "#B66BFF"
+# fill = "#B66BFF2E"
+# glow = "#B66BFF"
+# point = "#F6E7FF"
+
+# [graphs."disk.io".lines.write]
+# color = "#49E9FF"
+
+# Overall CPU usage
+# [graphs."cpu".lines.utilization]
+# color = "#FF39C8"
+
+# All logical processor graphs
+# [graphs."cpu.core".lines.utilization]
+# color = "#FF39C8"
+
+# RAM usage
+# [graphs."memory".lines.used]
+# color = "#FF39C8"
+
+# Disk activity percentage (the device-list graph)
+# [graphs."disk.activity".lines.active]
+# color = "#FF39C8"
+
+# Network throughput
+# [graphs."network".lines.receive]
+# color = "#B66BFF"
+
+# [graphs."network".lines.send]
+# color = "#49E9FF"
+
+# GPU activity and video memory
+# [graphs."gpu".lines.utilization]
+# color = "#FF39C8"
+
+# [graphs."gpu".lines.memory]
+# color = "#49E9FF"
+
+# Average processor clock frequency
+# [graphs."clock".lines.frequency]
+# color = "#FF39C8"
+
+# Live sensor graphs (temperature, voltage, fans, etc.)
+# [graphs."sensor".lines.value]
+# color = "#FF39C8"
+
+# Stall percentage for all pressure resources
+# [graphs."pressure".lines.stalled]
+# color = "#49E9FF"
+
+# Energy history
+# [graphs."energy".lines.value]
+# color = "#FF39C8"
+
+# Activity history
+# [graphs."energy.activity".lines.value]
+# color = "#FF39C8"
+
+# Recorded CPU usage
+# [graphs."flight.cpu".lines.utilization]
+# color = "#FF39C8"
+
+# Recorded RAM usage
+# [graphs."flight.memory".lines.used]
+# color = "#FF39C8"
+
+# Recorded disk throughput
+# [graphs."flight.disk".lines.read]
+# color = "#B66BFF"
+
+# [graphs."flight.disk".lines.write]
+# color = "#49E9FF"
+
+# Recorded network throughput
+# [graphs."flight.network".lines.receive]
+# color = "#B66BFF"
+
+# [graphs."flight.network".lines.send]
+# color = "#49E9FF"
+
+# Recorded GPU activity and memory
+# [graphs."flight.gpu".lines.utilization]
+# color = "#FF39C8"
+
+# [graphs."flight.gpu".lines.memory]
+# color = "#49E9FF"
+
+# Recorded sensor graph
+# [graphs."flight.sensor".lines.value]
+# color = "#FF39C8"
+
+# --- Graph-wide and individual-device examples -------------------------------
+# Apply these to the whole network graph, independently of its lines:
+# [graphs.network]
+# background = "#10081F"
+# grid = "#51316680"
+# axis = "#BCA6CF"
+
+# One logical processor; indices start at 0.
+# [graphs."cpu.core".instances."0".lines.utilization]
+# color = "#49E9FF"
+
+# One disk. Replace nvme0n1 with the disk name shown in Peepers.
+# [graphs."disk.io".instances."nvme0n1".lines.read]
+# color = "#FF547D"
+
+# One network interface. Replace eth0 with your interface name.
+# [graphs.network.instances."eth0".lines.receive]
+# color = "#FF547D"
+
+# One GPU; use its card identifier (for example card0), not its model name.
+# [graphs.gpu.instances."card0".lines.memory]
+# color = "#B66BFF"
+
+# One live sensor: chip ID, a slash, then the exact reading label.
+# Replace hwmon6/Core 0 with the identifiers for your sensor.
+# [graphs.sensor.instances."hwmon6/Core 0".lines.value]
+# color = "#49E9FF"
+
+# Pressure instance names are cpu, memory and io.
+# [graphs.pressure.instances."cpu".lines.stalled]
+# color = "#FF547D"
+
+# Other instance IDs:
+# disk.activity: disk name; energy / energy.activity: energy report entity ID.
+# flight.disk / flight.network / flight.gpu: device name stored in the recording.
+# flight.sensor: recorded sensor label.
+# cpu, memory, clock, flight.cpu and flight.memory have no instance IDs.
+# Instance tables accept graph-wide colours as well as .lines.LINE tables.
+
+# --- Controls and their interaction states -----------------------------------
+# [widgets.TYPE] sets all controls of that type.
+# [widgets."TYPE.STATE"] overrides one interaction state.
+# Buttons additionally allow [widgets."button.STYLE"] and
+# [widgets."button.STYLE.STATE"].
+# Button STYLE: primary, secondary, success, danger, text.
+# Button STATE: active, hovered, pressed, disabled.
+# Precedence: widget → widget state → button style → button style state.
+
+# Example: hovered primary buttons only:
+# [widgets."button.primary.hovered"]
+# background = "#D52DA7"
+# text = "#10081F"
+# border = "#FF39C8"
+# shadow = "#00000080"
+
+# All buttons; same four keys work for every button style/state.
+# [widgets.button]
+# background = "#302045"
+# text = "#F6E7FF"
+# border = "#513166"
+# shadow = "#00000000"
+
+# Example: pressed destructive buttons only.
+# [widgets."button.danger.pressed"]
+# background = "#FF547D"
+# text = "#10081F"
+
+# Text; explicit [ui] text roles take precedence. No interaction states.
+# [widgets.text]
+# text = "#F6E7FF"
+
+# Containers; applies even to normally transparent containers. No states.
+# [widgets.container]
+# background = "#1D1030"
+# text = "#F6E7FF"
+# border = "#513166"
+# shadow = "#00000000"
+
+# Checkboxes. States: active, hovered, disabled.
+# [widgets.checkbox]
+# background = "#FF39C8"
+# text = "#F6E7FF"
+# border = "#513166"
+# icon = "#10081F"
+
+# Dropdown controls. States: active, hovered, opened.
+# [widgets.pick_list]
+# background = "#1D1030"
+# text = "#F6E7FF"
+# border = "#513166"
+# placeholder = "#BCA6CF"
+# handle = "#DCA6FF"
+
+# Text fields. States: active, hovered, focused, disabled.
+# [widgets.text_input]
+# background = "#160D27"
+# text = "#F6E7FF"
+# border = "#513166"
+# placeholder = "#BCA6CF"
+# icon = "#DCA6FF"
+# selection = "#513166"
+
+# Example: focused text fields only.
+# [widgets."text_input.focused"]
+# border = "#FF39C8"
+
+# Open dropdown menu contents. No states.
+# [widgets.menu]
+# background = "#1D1030"
+# text = "#F6E7FF"
+# border = "#513166"
+# shadow = "#00000080"
+# selected_text = "#10081F"
+# selected_background = "#FF39C8"
+
+# Progress bars. No states.
+# [widgets.progress_bar]
+# background = "#302045"
+# bar = "#FF39C8"
+# border = "#513166"
+
+# Sliders (including playback and text size). States: active, hovered, dragged.
+# [widgets.slider]
+# rail_filled = "#FF39C8"
+# rail_empty = "#302045"
+# rail_border = "#513166"
+# handle = "#DCA6FF"
+# handle_border = "#FF39C8"
+
+# Scroll areas. States: active, hovered, dragged.
+# Rail = track; scroller = draggable thumb. Colours apply to both orientations.
+# [widgets.scrollable]
+# background = "#10081F"
+# border = "#513166"
+# gap = "#10081F"
+# rail = "#1D1030"
+# rail_border = "#513166"
+# scroller = "#513166"
+# scroller_border = "#DCA6FF"
+# auto_scroll = "#1D1030"
+# auto_scroll_icon = "#F6E7FF"
+# auto_scroll_border = "#513166"
+# auto_scroll_shadow = "#00000080"
+
+# Table separators. No states. Row highlights are in [ui].
+# [widgets.table]
+# separator_x = "#513166"
+# separator_y = "#513166"
+
+# Horizontal/vertical rules. No states.
+# [widgets.rule]
+# color = "#513166"
+
+# --- Tray miniature graphs ---------------------------------------------------
+# Both tray graphs. Low: below 60%; medium: below 85%; high: 85% or above.
+# Colours are opaque here; alpha is ignored. Tray menus follow the desktop.
+# [tray]
+# background = "#10081F"
+# text = "#F6E7FF"
+# low = "#B66BFF"
+# medium = "#49E9FF"
+# high = "#FF547D"
+
+# Override CPU or memory separately; all five keys are supported in each.
+# [tray.cpu]
+# background = "#10081F"
+# text = "#F6E7FF"
+# low = "#FF39C8"
+# medium = "#49E9FF"
+# high = "#FF547D"
+
+# [tray.memory]
+# background = "#10081F"
+# text = "#F6E7FF"
+# low = "#B66BFF"
+# medium = "#49E9FF"
+# high = "#FF547D"
+
+# --- Advanced: generated palette pairs ---------------------------------------
+# These change shared palette colours before ui/graph/widget overrides apply.
+# Every pair accepts color (background/accent) and text (its foreground).
+# All valid pair paths:
+#   extended.background.base       extended.background.weakest
+#   extended.background.weaker     extended.background.weak
+#   extended.background.neutral    extended.background.strong
+#   extended.background.stronger   extended.background.strongest
+#   extended.primary.base         extended.primary.weak         extended.primary.strong
+#   extended.secondary.base       extended.secondary.weak       extended.secondary.strong
+#   extended.success.base         extended.success.weak         extended.success.strong
+#   extended.warning.base         extended.warning.weak         extended.warning.strong
+#   extended.danger.base          extended.danger.weak          extended.danger.strong
+
+# [extended.background.weak]
+# color = "#1D1030"
+# text = "#F6E7FF"
+
+# [extended.primary.strong]
+# color = "#FF39C8"
+# text = "#10081F"

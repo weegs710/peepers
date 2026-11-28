@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 
 use iced::widget::{button, column, container, row, space, table, text};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::startup::{self, Scope, Startup};
 
 use crate::blocking;
@@ -80,7 +82,7 @@ impl StartupApps {
     pub fn view(&self) -> Element<'_, Message> {
         let Some(entries) = &self.entries else {
             return text("Reading the autostart entries")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let mut rows: Vec<&Startup> = entries.iter().collect();
@@ -98,9 +100,9 @@ impl StartupApps {
                 button(if entry.enabled { "Enabled" } else { "Disabled" })
                     .on_press(Message::Toggle(entry.clone()))
                     .style(if entry.enabled {
-                        button::success
+                        styles::button_success
                     } else {
-                        button::secondary
+                        styles::button_secondary
                     })
             }),
             table::column(
@@ -115,7 +117,7 @@ impl StartupApps {
         column![
             row![
                 space::horizontal(),
-                text(format!("{} startup apps", entries.len())).style(text::secondary)
+                text(format!("{} startup apps", entries.len())).style(styles::text_secondary)
             ]
             .padding(8),
             scrolling(table(columns, rows).padding_x(10).padding_y(2))

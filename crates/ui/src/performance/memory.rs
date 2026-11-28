@@ -1,4 +1,5 @@
-use iced::Element;
+use crate::theme::Element;
+
 use peepers_core::telemetry::Vitals;
 
 use super::Card;
@@ -87,10 +88,12 @@ pub fn view<'a, Message: 'a>(
 
 fn graph(history: &History) -> Graph {
     Graph::new(Scale::Fixed(100.0))
+        .key("memory")
         .line(
             history.series(|vitals| vitals.memory.used_percent()),
             Tone::Primary,
         )
         .named("In use")
+        .series("used")
         .readout(as_percent)
 }

@@ -1,3 +1,5 @@
+use crate::theme::styles;
+use crate::theme::{Element, Theme};
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
@@ -8,8 +10,8 @@ use std::time::Duration;
 use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
-use iced::widget::{container, text, tooltip};
-use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme};
+use iced::widget::{text, tooltip};
+use iced::{Color, Fill, Point, Rectangle, Renderer, Size};
 
 use crate::format;
 use crate::history::CAPACITY;
@@ -81,6 +83,7 @@ pub enum Scale {
 struct Line {
     values: Vec<Option<f32>>,
     tone: Tone,
+    key: &'static str,
     /// What the line shows, which the tooltip tells next to its newest value.
     name: Option<String>,
 }
@@ -108,6 +111,8 @@ impl Line {
 #[derive(Debug)]
 pub struct Graph {
     scale: Scale,
+    key: &'static str,
+    instance: Option<String>,
     lines: Vec<Line>,
     /// How many values fit across the width.
     span: usize,
@@ -119,14 +124,88 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// Stable key for the last line; its display name may contain arbitrary device text.
+    pub fn series(mut self, key: &'static str) -> Self {
+        if let Some(line) = self.lines.last_mut() {
+            line.key = key;
+        }
+        self
+    }
+
     pub fn new(scale: Scale) -> Self {
         Self {
             scale,
+            key: "",
+            instance: None,
             lines: Vec::new(),
             span: CAPACITY,
             marker: None,
             readout: None,
         }
+    }
+
+    /// Stable theme key, independent of translated or device-specific display labels.
+    pub fn key(mut self, key: &'static str) -> Self {
+        self.key = key;
+        self
+    }
+
+    pub fn instance(mut self, instance: impl Into<String>) -> Self {
+        self.instance = Some(instance.into());
+        self
+    }
+
+    fn color(&self, theme: &Theme, part: &str, fallback: Color) -> Color {
+        theme
+            .graph_color(self.key, self.instance.as_deref(), None, part)
+            .unwrap_or(fallback)
+    }
+
+    fn tooltip_style(&self, theme: &Theme) -> iced::widget::container::Style {
+        let mut style = styles::container_bordered_box(theme);
+        if let Some(color) = theme
+            .graph_color(self.key, self.instance.as_deref(), None, "tooltip")
+            .or_else(|| theme.override_color("tooltip"))
+        {
+            style.background = Some(color.into());
+        }
+        if let Some(color) = theme
+            .graph_color(self.key, self.instance.as_deref(), None, "legend")
+            .or_else(|| theme.override_color("tooltip_text"))
+        {
+            style.text_color = Some(color);
+        }
+        style
+    }
+
+    fn line_color(&self, theme: &Theme, line: &Line, part: &str) -> Color {
+        let lookup =
+            |part| theme.graph_color(self.key, self.instance.as_deref(), Some(line.key), part);
+        let role = match line.tone {
+            Tone::Primary => "primary",
+            Tone::Success => "success",
+            Tone::Warning => "warning",
+        };
+        let explicit = theme.graph_colors(
+            self.key,
+            self.instance.as_deref(),
+            Some(line.key),
+            &["color", role],
+        );
+        let base = explicit.unwrap_or_else(|| line.tone.color(theme));
+        lookup(part)
+            .or_else(|| {
+                if part == "point" {
+                    lookup("stroke")
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| match part {
+                "fill" => base.scale_alpha(0.18),
+                "stroke" | "point" if explicit.is_none() => lighten(base, 0.35),
+                _ => base,
+            })
     }
 
     pub fn span(mut self, span: usize) -> Self {
@@ -148,6 +227,7 @@ impl Graph {
         self.lines.push(Line {
             values,
             tone,
+            key: "",
             name: None,
         });
         self
@@ -181,13 +261,14 @@ impl Graph {
         if named == 0 {
             return plot.into();
         }
+        let tooltip_graph = Rc::clone(&graph);
         let legend = iced::widget::canvas(Legend { graph, hover })
             .width(LEGEND_WIDTH)
             .height(level(named as u64) * LEGEND_ROW);
         tooltip(plot, legend, tooltip::Position::FollowCursor)
             .delay(TOOLTIP_DELAY)
             .padding(8)
-            .style(container::bordered_box)
+            .style(move |theme: &Theme| tooltip_graph.tooltip_style(theme))
             .into()
     }
 
@@ -244,7 +325,7 @@ struct Plot {
     hover: Hover,
 }
 
-impl<Message> canvas::Program<Message> for Plot {
+impl<Message> canvas::Program<Message, Theme> for Plot {
     type State = Drawn;
 
     /// The glow is hundreds of discs to tessellate, and a window is redrawn for any pointer move
@@ -284,7 +365,7 @@ struct Legend {
     hover: Hover,
 }
 
-impl<Message> canvas::Program<Message> for Legend {
+impl<Message> canvas::Program<Message, Theme> for Legend {
     type State = ();
 
     fn draw(
@@ -297,9 +378,17 @@ impl<Message> canvas::Program<Message> for Legend {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let right = frame.width();
-        let color = theme.extended_palette().background.weakest.text;
+        let color = self
+            .graph
+            .tooltip_style(theme)
+            .text_color
+            .unwrap_or(theme.extended_palette().background.weakest.text);
         let entries = self.graph.entries(self.hover.get());
-        for (row, (tone, name, value)) in entries.into_iter().enumerate() {
+        for (row, ((_, name, value), line)) in entries
+            .into_iter()
+            .zip(self.graph.lines.iter().filter(|line| line.name.is_some()))
+            .enumerate()
+        {
             let y = (level(row as u64) + 0.5) * LEGEND_ROW;
             let write = |content: String, x: f32, align_x: text::Alignment| canvas::Text {
                 content,
@@ -312,7 +401,7 @@ impl<Message> canvas::Program<Message> for Legend {
             };
             frame.fill(
                 &Path::circle(Point::new(LEGEND_DOT, y), LEGEND_DOT),
-                tone.color(theme),
+                self.graph.line_color(theme, line, "stroke"),
             );
             frame.fill_text(write(name, LEGEND_DOT * 3.0, text::Alignment::Left));
             frame.fill_text(write(value, right, text::Alignment::Right));
@@ -336,6 +425,25 @@ impl Graph {
             palette.danger,
         ] {
             colour.into_rgba8().hash(&mut hasher);
+        }
+        let extended = theme.extended_palette();
+        for (part, fallback) in [
+            ("background", Color::TRANSPARENT),
+            ("grid", extended.background.strong.color.scale_alpha(0.6)),
+            ("axis", extended.background.base.text.scale_alpha(0.55)),
+            ("marker", extended.background.base.text),
+            ("crosshair", extended.background.base.text.scale_alpha(0.4)),
+        ] {
+            self.color(theme, part, fallback)
+                .into_rgba8()
+                .hash(&mut hasher);
+        }
+        for line in &self.lines {
+            for part in ["fill", "glow", "stroke", "point"] {
+                self.line_color(theme, line, part)
+                    .into_rgba8()
+                    .hash(&mut hasher);
+            }
         }
         match self.scale {
             Scale::Fixed(ceiling) => (0_u8, ceiling.to_bits()),
@@ -369,36 +477,52 @@ impl Graph {
             .iter()
             .filter_map(|line| {
                 let at = place(back, self.span, line.at(back)?, ceiling, frame.size());
-                Some((at, line.tone.color(theme)))
+                Some((at, self.line_color(theme, line, "point")))
             })
             .collect();
         let Some((first, _)) = dots.first() else {
             return;
         };
-        let color = theme.extended_palette().background.base.text;
+        let color = self.color(
+            theme,
+            "crosshair",
+            theme
+                .extended_palette()
+                .background
+                .base
+                .text
+                .scale_alpha(0.4),
+        );
         frame.stroke(
             &Path::line(
                 Point::new(first.x, 0.0),
                 Point::new(first.x, frame.height()),
             ),
-            Stroke::default()
-                .with_width(1.0)
-                .with_color(color.scale_alpha(0.4)),
+            Stroke::default().with_width(1.0).with_color(color),
         );
         for (at, color) in dots {
-            frame.fill(&Path::circle(at, MARK_DOT), lighten(color, 0.35));
+            frame.fill(&Path::circle(at, MARK_DOT), color);
         }
     }
 
     fn paint(&self, frame: &mut Frame, theme: &Theme) {
         let (width, height) = (frame.width(), frame.height());
+        frame.fill_rectangle(
+            Point::ORIGIN,
+            frame.size(),
+            self.color(theme, "background", Color::TRANSPARENT),
+        );
         let grid = Stroke::default().with_width(1.0).with_color(
-            theme
-                .extended_palette()
-                .background
-                .strong
-                .color
-                .scale_alpha(0.6),
+            self.color(
+                theme,
+                "grid",
+                theme
+                    .extended_palette()
+                    .background
+                    .strong
+                    .color
+                    .scale_alpha(0.6),
+            ),
         );
         for quarter in 1..4 {
             let y = height * along(quarter, 4);
@@ -407,10 +531,26 @@ impl Graph {
 
         let ceiling = self.ceiling().max(f32::EPSILON);
         if self.readout.is_some() && height >= AXIS_MIN_HEIGHT {
-            scale(frame, theme, height, |share| self.write(ceiling * share));
+            scale(
+                frame,
+                self.color(
+                    theme,
+                    "axis",
+                    theme
+                        .extended_palette()
+                        .background
+                        .base
+                        .text
+                        .scale_alpha(0.55),
+                ),
+                height,
+                |share| self.write(ceiling * share),
+            );
         }
         for line in &self.lines {
-            let color = line.tone.color(theme);
+            let color = self.line_color(theme, line, "glow");
+            let fill = self.line_color(theme, line, "fill");
+            let stroke = self.line_color(theme, line, "stroke");
             for points in segments(&line.values, self.span, ceiling, frame.size()) {
                 let (Some(first), Some(last)) = (points.first(), points.last()) else {
                     continue;
@@ -429,14 +569,18 @@ impl Graph {
                     builder.line_to(Point::new(last.x, height));
                     builder.close();
                 });
-                frame.fill(&area, color.scale_alpha(0.18));
+                frame.fill(&area, fill);
                 glow(frame, &points, color, height);
-                frame.stroke(&outline, round(1.5, lighten(color, 0.35)));
+                frame.stroke(&outline, round(1.5, stroke));
             }
         }
         if let Some(fraction) = self.marker {
             let x = width * fraction;
-            let color = theme.extended_palette().background.base.text;
+            let color = self.color(
+                theme,
+                "marker",
+                theme.extended_palette().background.base.text,
+            );
             frame.stroke(
                 &Path::line(Point::new(x, 0.0), Point::new(x, height)),
                 Stroke::default().with_width(1.0).with_color(color),
@@ -446,13 +590,7 @@ impl Graph {
 }
 
 /// Writes the value each gridline stands for, and the ceiling at the top, down the left edge.
-fn scale(frame: &mut Frame, theme: &Theme, height: f32, label: impl Fn(f32) -> String) {
-    let color = theme
-        .extended_palette()
-        .background
-        .base
-        .text
-        .scale_alpha(0.55);
+fn scale(frame: &mut Frame, color: Color, height: f32, label: impl Fn(f32) -> String) {
     for quarter in 0..4 {
         let y = height * along(quarter, 4);
         let (position, align_y) = if quarter == 0 {
@@ -523,6 +661,9 @@ fn lighten(color: Color, amount: f32) -> Color {
 }
 
 fn glow(frame: &mut Frame, points: &[Point], color: Color, height: f32) {
+    if color.a == 0.0 {
+        return;
+    }
     let reach = (height * REACH).clamp(2.0, REACH_MAX) / REACH_MAX;
     for (full, total) in LAYERS {
         let radius = full * reach;
@@ -638,6 +779,52 @@ mod tests {
 
     fn cpu(values: Vec<f32>) -> Graph {
         Graph::new(Scale::Fixed(100.0)).line(values, Tone::Primary)
+    }
+
+    #[test]
+    fn tooltips_inherit_panels_until_tooltip_or_graph_colors_override_them() {
+        let graph = Graph::new(Scale::Fixed(100.0)).key("cpu");
+        let panel = "[ui]\npanel = '#112233'\npanel_text = '#AABBCC'";
+        let theme = crate::theme::parse(panel, "Panel").unwrap();
+        let style = graph.tooltip_style(&theme);
+        assert_eq!(
+            style.background,
+            Some("#112233".parse::<Color>().unwrap().into())
+        );
+        assert_eq!(style.text_color, Some("#AABBCC".parse().unwrap()));
+        let theme = crate::theme::parse(
+            &format!("{panel}\ntooltip = '#223344'\ntooltip_text = '#BBCCDD'"),
+            "Tooltip",
+        )
+        .unwrap();
+        let style = graph.tooltip_style(&theme);
+        assert_eq!(
+            style.background,
+            Some("#223344".parse::<Color>().unwrap().into())
+        );
+        assert_eq!(style.text_color, Some("#BBCCDD".parse().unwrap()));
+        let theme = crate::theme::parse(
+            &format!("{panel}\n[widgets.container]\nbackground = '#334455'\ntext = '#CCDDEE'"),
+            "Container",
+        )
+        .unwrap();
+        let style = graph.tooltip_style(&theme);
+        assert_eq!(
+            style.background,
+            Some("#334455".parse::<Color>().unwrap().into())
+        );
+        assert_eq!(style.text_color, Some("#CCDDEE".parse().unwrap()));
+        let theme = crate::theme::parse(
+            &format!("{panel}\n[graphs.cpu]\ntooltip = '#445566'\nlegend = '#DDEEFF'"),
+            "Graph",
+        )
+        .unwrap();
+        let style = graph.tooltip_style(&theme);
+        assert_eq!(
+            style.background,
+            Some("#445566".parse::<Color>().unwrap().into())
+        );
+        assert_eq!(style.text_color, Some("#DDEEFF".parse().unwrap()));
     }
 
     #[test]
@@ -824,5 +1011,39 @@ mod tests {
         let values = [1.0, 9.0, 2.0, 3.0, 8.0, 4.0];
         assert_eq!(decimate(&values, 3), [9.0, 3.0, 8.0]);
         assert!(decimate(&values, 4).len() <= 4);
+    }
+    #[test]
+    fn line_only_edits_invalidate_cached_geometry_and_preserve_exact_colors() {
+        let first =
+            crate::theme::parse("[graphs.network.lines.receive]\ncolor = '#B66BFF'", "Same")
+                .unwrap();
+        let second =
+            crate::theme::parse("[graphs.network.lines.receive]\ncolor = '#49E9FF'", "Same")
+                .unwrap();
+        let graph = Graph::new(Scale::Fixed(100.0))
+            .key("network")
+            .line(vec![1.0, 2.0], Tone::Success)
+            .named("Receive")
+            .series("receive");
+        assert_eq!(first.palette(), second.palette());
+        assert_ne!(graph.fingerprint(&first), graph.fingerprint(&second));
+        assert_eq!(
+            graph.line_color(&first, &graph.lines[0], "stroke"),
+            "#B66BFF".parse().unwrap()
+        );
+        assert_eq!(
+            graph.line_color(&first, &graph.lines[0], "point"),
+            "#B66BFF".parse().unwrap()
+        );
+        let grid = crate::theme::parse("[graph]\ngrid = '#49E9FF'", "Same").unwrap();
+        assert_ne!(graph.fingerprint(&Theme::Dark), graph.fingerprint(&grid));
+    }
+    #[test]
+    fn derived_grid_edits_invalidate_cached_geometry() {
+        let changed =
+            crate::theme::parse("[extended.background.strong]\ncolor = '#49E9FF'", "Grid").unwrap();
+        let graph = cpu(vec![10.0, 20.0]);
+        assert_eq!(changed.palette(), Theme::Dark.palette());
+        assert_ne!(graph.fingerprint(&changed), graph.fingerprint(&Theme::Dark));
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::futures::SinkExt;
 use iced::{Subscription, Task, stream};
-use peepers_core::tray::{Event, Gauges, Tray};
+use peepers_core::tray::{Event, Gauges, IconColors, Tray};
 
 use crate::blocking;
 
@@ -57,6 +57,12 @@ impl Indicator {
     pub fn show(&self, gauges: Gauges) {
         if let Some(tray) = &self.tray {
             tray.show(gauges);
+        }
+    }
+
+    pub fn set_colors(&self, colors: IconColors) {
+        if let Some(tray) = &self.tray {
+            tray.set_colors(colors);
         }
     }
 

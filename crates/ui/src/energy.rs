@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::sync::Arc;
 
+use iced::Fill;
 use iced::widget::{button, column, container, pick_list, row, rule, scrollable, text, text_input};
-use iced::{Element, Fill};
 use peepers_core::energy::{CPU, Kind, Report, Row};
 
 use crate::graph::{Graph, Scale, Tone};
@@ -91,14 +93,14 @@ impl Energy {
                 .as_ref()
                 .and_then(|report| report.warning.as_ref());
             return column![header]
-                .extend(warning.map(|warning| text(warning).style(text::danger).into()))
+                .extend(warning.map(|warning| text(warning).style(styles::text_danger).into()))
                 .spacing(12)
                 .into();
         }
         let mut content = column![
             row![header, pick_list([Range::Day, Range::Week, Range::Month, Range::Quarter], Some(self.range), Message::Range)].spacing(24).align_y(iced::Center),
-            text("Recorded while Peepers is running, including in the tray. Display pause does not pause collection.").style(text::secondary),
-            text("CPU shares are estimates from CPU activity, not whole-app power or predicted savings. Hardware channels overlap: do not add them together.").style(text::secondary),
+            text("Recorded while Peepers is running, including in the tray. Display pause does not pause collection.").style(styles::text_secondary),
+            text("CPU shares are estimates from CPU activity, not whole-app power or predicted savings. Hardware channels overlap: do not add them together.").style(styles::text_secondary),
         ].spacing(12);
         let Some(report) = &self.report else {
             return content.push(text("Loading saved energy history…")).into();
@@ -108,7 +110,7 @@ impl Energy {
         }
         content = content.push(text(&report.status));
         if let Some(warning) = &report.warning {
-            content = content.push(text(warning).style(text::danger));
+            content = content.push(text(warning).style(styles::text_danger));
         }
         content = content.push(
             text(format!(
@@ -118,7 +120,7 @@ impl Energy {
                 duration(report.observed_seconds)
             ))
             .size(13)
-            .style(text::secondary),
+            .style(styles::text_secondary),
         );
         if let Some(directory) = &report.directory {
             content = content.push(
@@ -127,7 +129,7 @@ impl Energy {
                     directory.display()
                 ))
                 .size(12)
-                .style(text::secondary),
+                .style(styles::text_secondary),
             );
         }
         let selected = self.selected.as_deref().unwrap_or(CPU);
@@ -154,7 +156,7 @@ impl Energy {
         ] {
             content = content.push(Self::table(report, title, kinds, &self.filter));
         }
-        content.push(text("Energy and averages cover available readings only. “—” means unavailable. CPU-active time and bursts describe sampled activity; short-lived work between samples can be missed. Peaks are interval averages.").size(13).style(text::secondary)).into()
+        content.push(text("Energy and averages cover available readings only. “—” means unavailable. CPU-active time and bursts describe sampled activity; short-lived work between samples can be missed. Peaks are interval averages.").size(13).style(styles::text_secondary)).into()
     }
 
     fn table<'a>(
@@ -165,7 +167,7 @@ impl Energy {
     ) -> Element<'a, Message> {
         let needle = filter.to_lowercase();
         let mut table = column![
-            text(title).size(20),
+            text(title).size(20).style(styles::section_heading),
             row![
                 text("Name / source").width(Fill),
                 text("Energy").width(95),
@@ -196,9 +198,9 @@ impl Energy {
                         text(&row.entity.name),
                         text(row.entity.kind.label())
                             .size(12)
-                            .style(text::secondary)
+                            .style(styles::text_secondary)
                     ])
-                    .style(button::text)
+                    .style(styles::button_text)
                     .on_press(Message::Select(row.entity.id.clone()))
                     .width(Fill),
                     text(energy(m.watt_hours())).width(95),
@@ -226,7 +228,8 @@ impl Energy {
             );
         }
         if count == 0 {
-            table = table.push(text("No matching readings in this range").style(text::secondary));
+            table = table
+                .push(text("No matching readings in this range").style(styles::text_secondary));
         }
         table.into()
     }
@@ -255,9 +258,16 @@ impl Energy {
             })
             .collect();
         let graph = Graph::new(Scale::Fit { floor: 0.01 })
+            .key(if activity {
+                "energy.activity"
+            } else {
+                "energy"
+            })
+            .instance(&row.entity.id)
             .span(report.periods.len())
             .optional_line(values, Tone::Primary)
             .named(&row.entity.name)
+            .series("value")
             .readout(move |v| {
                 if activity {
                     format!("{v:.1} min")
@@ -289,7 +299,7 @@ impl Energy {
                         duration(m.measured_seconds),
                         duration(m.active_seconds)
                     ))
-                    .style(text::secondary)
+                    .style(styles::text_secondary)
                 ]
                 .spacing(12)
                 .into(),
@@ -297,7 +307,7 @@ impl Energy {
         });
         container(
             column![
-                text(&row.entity.name).size(22),
+                text(&row.entity.name).size(22).style(styles::heading),
                 text(format!(
                     "{} · {} available / {} observed · average {} · peak {}",
                     energy(metrics.watt_hours()),
@@ -316,14 +326,14 @@ impl Energy {
                 } else {
                     "Energy per UTC hour · oldest → newest"
                 })
-                .style(text::secondary),
+                .style(styles::text_secondary),
                 container(graph.view()).height(160).width(Fill),
                 scrollable(column(timeline).spacing(4)).height(120),
             ]
             .spacing(8),
         )
         .padding(12)
-        .style(container::bordered_box)
+        .style(styles::container_bordered_box)
         .into()
     }
 }

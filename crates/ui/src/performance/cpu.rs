@@ -1,5 +1,6 @@
+use crate::theme::Element;
+use iced::Fill;
 use iced::widget::{column, container};
-use iced::{Element, Fill};
 use peepers_core::cpu::Info;
 use peepers_core::telemetry::Vitals;
 
@@ -46,8 +47,10 @@ pub fn view<'a, Message: 'a>(
 
 fn graph(history: &History) -> Graph {
     Graph::new(Scale::Fixed(100.0))
+        .key("cpu")
         .line(history.series(|vitals| vitals.cpu.usage), Tone::Primary)
         .named("Utilization")
+        .series("utilization")
         .readout(as_percent)
 }
 
@@ -56,8 +59,11 @@ fn core<'a, Message: 'a>(history: &History, index: usize) -> Element<'a, Message
         history.series(move |vitals| vitals.cpu.cores.get(index).map_or(0.0, |core| core.usage));
     container(
         Graph::new(Scale::Fixed(100.0))
+            .key("cpu.core")
+            .instance(index.to_string())
             .line(usage, Tone::Primary)
             .named(format!("Core {index}"))
+            .series("utilization")
             .readout(as_percent)
             .view(),
     )

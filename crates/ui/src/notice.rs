@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::time::{Duration, Instant};
 
+use iced::Fill;
 use iced::widget::{button, row, text};
-use iced::{Element, Fill};
 
 /// How long a success stays on screen.
 const LINGER: Duration = Duration::from_secs(5);
@@ -65,16 +67,18 @@ impl Notice {
         let line = text(&self.text)
             .width(Fill)
             .style(if self.kind == Kind::Failure {
-                text::danger
+                styles::text_danger
             } else {
-                text::success
+                styles::text_success
             });
         if self.kind == Kind::Success {
             line.into()
         } else {
             row![
                 line,
-                button("Dismiss").on_press(dismiss).style(button::text)
+                button("Dismiss")
+                    .on_press(dismiss)
+                    .style(styles::button_text)
             ]
             .spacing(8)
             .align_y(iced::Center)

@@ -1,9 +1,11 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::{checkbox, column, container, row, space, table, text, text_input};
-use iced::{Element, Fill, Right, Subscription, Task};
+use iced::{Fill, Right, Subscription, Task};
 use peepers_core::drivers::{self, Driver, State};
 
 use crate::blocking;
@@ -84,7 +86,7 @@ impl Drivers {
     pub fn view(&self) -> Element<'_, Message> {
         let Some(drivers) = &self.list else {
             return text("Reading the kernel modules")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let needle = self.filter.to_lowercase();
@@ -142,7 +144,7 @@ impl Drivers {
                 .label("Built-in modules")
                 .on_toggle(Message::BuiltIn),
             space::horizontal(),
-            text(format!("{count} modules")).style(text::secondary),
+            text(format!("{count} modules")).style(styles::text_secondary),
         ]
         .spacing(16)
         .padding(8)
@@ -177,12 +179,12 @@ fn details(driver: &Driver) -> Element<'_, Message> {
         }
     };
     column![
-        text(&driver.name).size(20),
+        text(&driver.name).size(20).style(styles::heading),
         text(driver.path.as_ref().map_or_else(
             || "Built into the kernel image, so it cannot be unloaded".to_owned(),
             |path| path.display().to_string()
         ))
-        .style(text::secondary),
+        .style(styles::text_secondary),
         stats([
             ("Used by", list(&driver.used_by)),
             ("Depends on", list(&driver.depends)),

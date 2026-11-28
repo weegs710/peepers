@@ -1,4 +1,5 @@
-use iced::Element;
+use crate::theme::Element;
+
 use iced::widget::space;
 use peepers_core::gpu::{Adapter, Pool, Vendor};
 use peepers_core::telemetry::Vitals;
@@ -97,10 +98,14 @@ fn graph(history: &History, name: &str) -> Graph {
             .map(|vram| 100.0 * pool_ratio(vram))
     });
     Graph::new(Scale::Fixed(100.0))
+        .key("gpu")
+        .instance(name)
         .optional_line(utilization, Tone::Primary)
         .named("Utilization")
+        .series("utilization")
         .optional_line(memory, Tone::Warning)
         .named("Video memory")
+        .series("memory")
         .readout(as_percent)
 }
 

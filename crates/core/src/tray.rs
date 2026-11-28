@@ -19,7 +19,7 @@ use zvariant::ObjectPath;
 use self::icon::{Pixmap, Trace};
 use self::menu::Menu;
 
-pub use self::icon::Gauges;
+pub use self::icon::{Gauges, GraphColors, IconColors};
 pub use self::menu::Event;
 
 const PATH: &str = "/StatusNotifierItem";
@@ -207,6 +207,11 @@ impl Tray {
         self.change(|state| state.trace.push(gauges));
     }
 
+    /// Recolours existing history without adding a sample.
+    pub fn set_colors(&self, colors: IconColors) {
+        self.change(|state| state.trace.colors = colors);
+    }
+
     /// Whether the window is open, which the menu's first entry offers to reverse.
     pub fn set_window_open(&self, open: bool) {
         self.change(|state| state.window_open = open);
@@ -224,8 +229,15 @@ impl Tray {
     /// A wake that finds one already waiting is dropped, because whoever handles that one reads
     /// the latest state.
     fn change(&self, apply: impl FnOnce(&mut State)) {
-        apply(&mut locked(&self.state));
-        let _ = self.wake.try_send(());
+        let changed = {
+            let mut state = locked(&self.state);
+            let before = *state;
+            apply(&mut state);
+            *state != before
+        };
+        if changed {
+            let _ = self.wake.try_send(());
+        }
     }
 }
 
@@ -292,6 +304,32 @@ mod tests {
     use zvariant::{OwnedValue, Value};
 
     use super::*;
+
+    #[test]
+    fn unchanged_state_does_not_wake_worker_and_dropping_tray_disconnects_it() {
+        let (wake, woken) = mpsc::sync_channel(1);
+        let (_, received) = mpsc::channel();
+        let tray = Tray {
+            state: Arc::new(Mutex::new(State::default())),
+            wake,
+            events: Events(Arc::new(Mutex::new(received))),
+        };
+        tray.set_colors(IconColors::default());
+        tray.set_paused(false);
+        assert_eq!(woken.try_recv(), Err(mpsc::TryRecvError::Empty));
+        let mut colors = IconColors::default();
+        colors.cpu.background = [1, 2, 3];
+        tray.set_colors(colors);
+        assert_eq!(woken.try_recv(), Ok(()));
+        tray.set_colors(colors);
+        assert_eq!(woken.try_recv(), Err(mpsc::TryRecvError::Empty));
+        tray.set_paused(true);
+        tray.set_window_open(true);
+        assert_eq!(woken.try_recv(), Ok(()));
+        assert_eq!(woken.try_recv(), Err(mpsc::TryRecvError::Empty));
+        drop(tray);
+        assert_eq!(woken.recv(), Err(mpsc::RecvError));
+    }
 
     /// Reads the item the way a host does, with no cache between the test and the bus.
     fn item(bus: &Connection) -> Proxy<'static> {

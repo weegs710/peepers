@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 
+use iced::Fill;
 use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{Element, Fill};
 use peepers_core::pressure::Pressure;
 use peepers_core::process::{Process, State};
 use peepers_core::telemetry::Vitals;
@@ -52,14 +54,14 @@ impl Resource {
 /// process table's own.
 pub fn view<'a>(history: &'a History, processes: &'a Processes) -> Element<'a, Message> {
     let Some(latest) = history.latest() else {
-        return container(text("Waiting for the first sample").style(text::secondary))
+        return container(text("Waiting for the first sample").style(styles::text_secondary))
             .center(Fill)
             .into();
     };
     let selected = processes.selected();
     scrollable(
         column![
-            text("System pressure").size(24),
+            text("System pressure").size(24).style(styles::heading),
             summary(latest),
             flow(CARD_WIDTH, CARD_SPACING, move || {
                 Resource::ALL
@@ -95,7 +97,7 @@ pub fn view<'a>(history: &'a History, processes: &'a Processes) -> Element<'a, M
                         ),
                         text("Only your own processes report what they read and write.")
                             .size(12)
-                            .style(text::secondary),
+                            .style(styles::text_secondary),
                     ]
                     .spacing(8)
                     .into(),
@@ -133,7 +135,7 @@ fn summary<'a, Message: 'a>(latest: &Vitals) -> Element<'a, Message> {
         text(format!(
             "{per_processor:.2} runnable tasks per logical processor over the last minute"
         ))
-        .style(text::secondary)
+        .style(styles::text_secondary)
     ]
     .spacing(2)
     .into()
@@ -162,7 +164,7 @@ fn card<'a, Message: 'a>(
             "Over 10 s {:.1}%, 60 s {:.1}%, 5 min {:.1}%",
             now.some.avg10, now.some.avg60, now.some.avg300
         ))
-        .style(text::secondary)
+        .style(styles::text_secondary)
         .into(),
     ];
     lines.extend(now.full.map(|full| {
@@ -171,20 +173,29 @@ fn card<'a, Message: 'a>(
                 "Everything stalled at once: {:.1}% over 10 s",
                 full.avg10
             ))
-            .style(text::secondary),
+            .style(styles::text_secondary),
         )
     }));
     container(
         column![
             row![
-                text(resource.title()).size(18),
+                text(resource.title())
+                    .size(18)
+                    .style(styles::section_heading),
                 space::horizontal(),
                 text(format!("{:.1}%", now.some.avg10))
             ],
             container(
                 Graph::new(Scale::Fit { floor: 10.0 })
+                    .key("pressure")
+                    .instance(match resource {
+                        Resource::Cpu => "cpu",
+                        Resource::Memory => "memory",
+                        Resource::Io => "io",
+                    })
                     .line(some, Tone::Warning)
                     .named("Stalled (10 s)")
+                    .series("stalled")
                     .readout(|value| format!("{value:.1}%"))
                     .view()
             )
@@ -195,7 +206,7 @@ fn card<'a, Message: 'a>(
     )
     .width(Fill)
     .padding(12)
-    .style(container::rounded_box)
+    .style(styles::container_rounded_box)
     .into()
 }
 
@@ -213,7 +224,7 @@ fn contributors<'a>(
         button(
             row![
                 text(process.name.clone()).width(Fill),
-                text(value(process)).style(text::secondary)
+                text(value(process)).style(styles::text_secondary)
             ]
             .spacing(16),
         )
@@ -221,16 +232,19 @@ fn contributors<'a>(
         .padding([2, 6])
         .on_press(Message::Select(process.pid))
         .style(if selected == Some(process.pid) {
-            button::secondary
+            styles::button_secondary
         } else {
-            button::text
+            styles::button_text
         })
         .into()
     });
-    column![text(title).size(18), column(rows).spacing(4)]
-        .spacing(8)
-        .width(Fill)
-        .into()
+    column![
+        text(title).size(18).style(styles::section_heading),
+        column(rows).spacing(4)
+    ]
+    .spacing(8)
+    .width(Fill)
+    .into()
 }
 
 fn waiting_on_disk(process: &Process) -> bool {

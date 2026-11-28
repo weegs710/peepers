@@ -1,5 +1,6 @@
+use crate::theme::{Element, Theme};
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
-use iced::{Element, Point, Rectangle, Renderer, Theme, mouse};
+use iced::{Point, Rectangle, Renderer, mouse};
 
 use crate::Page;
 
@@ -207,7 +208,7 @@ struct Icon {
     selected: bool,
 }
 
-impl<Message> canvas::Program<Message> for Icon {
+impl<Message> canvas::Program<Message, Theme> for Icon {
     type State = ();
 
     fn draw(
@@ -220,9 +221,9 @@ impl<Message> canvas::Program<Message> for Icon {
     ) -> Vec<Geometry> {
         let palette = theme.extended_palette();
         let color = if self.selected {
-            palette.primary.base.text
+            theme.color("selected_icon", palette.primary.base.text)
         } else {
-            palette.background.base.text
+            theme.color("icon", palette.background.base.text)
         };
         let scale = bounds.width / GRID;
         let at = |(x, y): (f32, f32)| Point::new(x * scale, y * scale);

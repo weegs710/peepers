@@ -1,8 +1,9 @@
+use crate::theme::Theme;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use iced::{Size, Theme};
+use iced::Size;
 use iced_test::Simulator;
 use peepers_core::health::{Ata, Health, Nvme};
 use peepers_core::telemetry::Sampler;
@@ -12,11 +13,11 @@ use super::*;
 const WINDOW: Size = Size::new(1280.0, 800.0);
 const POPOUT: Size = Size::new(300.0, 560.0);
 
-fn ui(app: &Peepers) -> Simulator<'_, Message> {
+fn ui(app: &Peepers) -> Simulator<'_, Message, Theme> {
     ui_sized(app, WINDOW)
 }
 
-fn ui_sized(app: &Peepers, size: Size) -> Simulator<'_, Message> {
+fn ui_sized(app: &Peepers, size: Size) -> Simulator<'_, Message, Theme> {
     Simulator::with_size(
         iced::Settings::default(),
         size,
@@ -25,7 +26,7 @@ fn ui_sized(app: &Peepers, size: Size) -> Simulator<'_, Message> {
 }
 
 /// The popout as it looks once it is open.
-fn popout(app: &mut Peepers) -> Simulator<'_, Message> {
+fn popout(app: &mut Peepers) -> Simulator<'_, Message, Theme> {
     update(app, Message::TogglePopout);
     let id = app.windows.popout.id().unwrap();
     Simulator::with_size(iced::Settings::default(), POPOUT, app.view(id))
@@ -1366,5 +1367,39 @@ fn measured() -> peepers_core::bench::Loaded {
     Loaded {
         history,
         skipped: 0,
+    }
+}
+
+#[test]
+#[ignore = "renders the custom theme; set PEEPERS_SHOTS to an empty directory"]
+fn render_custom_theme() {
+    let directory = std::env::var("PEEPERS_SHOTS").unwrap();
+    let themes = [
+        (
+            "Arcane",
+            include_str!("../../../packaging/themes/arcane-neon.toml"),
+        ),
+        (
+            "Crazy",
+            include_str!("../../../packaging/themes/crazy.toml"),
+        ),
+    ];
+    let mut app = sampled();
+    update(
+        &mut app,
+        Message::Flight(flight::Message::Loaded(Ok(Box::new(recording(12))))),
+    );
+    for (name, contents) in themes {
+        let theme = crate::theme::parse(contents, name).unwrap();
+        for page in [Page::Performance, Page::Flight, Page::Settings, Page::Power] {
+            update(&mut app, Message::Navigate(page));
+            assert!(
+                ui(&app)
+                    .snapshot(&theme)
+                    .unwrap()
+                    .matches_image(format!("{directory}/{name}-{page:?}"))
+                    .unwrap()
+            );
+        }
     }
 }

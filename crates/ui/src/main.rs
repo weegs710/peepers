@@ -1,3 +1,5 @@
+use crate::theme::styles;
+use crate::theme::{Element, Theme};
 mod apps;
 mod benchmarks;
 mod blocking;
@@ -42,7 +44,7 @@ use std::sync::Arc;
 
 use iced::time;
 use iced::widget::{button, column, container, row, rule, scrollable, text};
-use iced::{Element, Fill, Subscription, Task, Theme};
+use iced::{Fill, Subscription, Task};
 use peepers_core::ipc::{Command, PAGES};
 use peepers_core::telemetry::Sample;
 use peepers_core::tray::{Event as Click, Gauges};
@@ -480,6 +482,17 @@ impl Peepers {
         self.latest = Some(sample);
     }
 
+    fn update_settings(&mut self, message: settings::Message) -> Task<Message> {
+        let tray_changed = matches!(message, settings::Message::Tray(_));
+        let saved = self.preferences.update(message).map(Message::Settings);
+        self.tray.set_colors(self.preferences.theme().tray_colors());
+        if tray_changed {
+            Task::batch([saved, self.sync_tray()])
+        } else {
+            saved
+        }
+    }
+
     fn apply(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Energy(message) => {
@@ -541,16 +554,14 @@ impl Peepers {
             Message::Users(message) => return self.users.update(message).map(Message::Users),
             Message::Info(message) => return self.info.update(message).map(Message::Info),
             Message::Tick => {}
-            Message::Settings(message) => {
-                let saved = self.preferences.update(message).map(Message::Settings);
-                return Task::batch([saved, self.sync_tray()]);
-            }
+            Message::Settings(message) => return self.update_settings(message),
             Message::Tray(tray::Message::Started(result)) => {
                 self.tray
                     .started(result, self.preferences.settings.startup.tray);
                 self.tray.set_window_open(self.windows.main.is_open());
                 self.tray.set_popout_open(self.windows.popout.is_open());
                 self.tray.set_paused(self.paused);
+                self.tray.set_colors(self.preferences.theme().tray_colors());
             }
             Message::Tray(tray::Message::Clicked(click)) => match click {
                 Click::Activate => return self.windows.main.activate(),
@@ -634,7 +645,9 @@ impl Peepers {
             telemetry::subscription(&self.collector, interval),
             window::events().map(Message::Window),
             settings::keys().map(Message::Settings),
-            self.preferences.subscription().map(Message::Settings),
+            self.preferences
+                .subscription(self.page == Page::Settings && self.windows.main.is_open())
+                .map(Message::Settings),
             self.door.subscription().map(Message::Ipc),
             self.tray.subscription().map(Message::Tray),
             page,
@@ -647,7 +660,7 @@ impl Peepers {
                 text(format!(
                     "Could not save energy history before quitting: {error}"
                 ))
-                .style(text::danger),
+                .style(styles::text_danger),
                 row![
                     button("Retry saving and quit").on_press(Message::Quit(None)),
                     button("Quit without saving energy").on_press(Message::QuitWithoutEnergySave)
@@ -680,9 +693,9 @@ impl Peepers {
                 .width(Fill)
                 .on_press(Message::Navigate(page))
                 .style(if current {
-                    button::primary
+                    styles::button_primary
                 } else {
-                    button::text
+                    styles::button_text
                 })
                 .into()
             }))
@@ -697,9 +710,9 @@ impl Peepers {
         .width(Fill)
         .on_press(Message::TogglePause)
         .style(if self.paused {
-            button::primary
+            styles::button_primary
         } else {
-            button::secondary
+            styles::button_secondary
         });
         let popout = button(if self.windows.popout.is_open() {
             "Close popout"
@@ -708,7 +721,7 @@ impl Peepers {
         })
         .width(Fill)
         .on_press(Message::TogglePopout)
-        .style(button::secondary);
+        .style(styles::button_secondary);
         let rail = column![
             scrollable(pages).height(Fill),
             container(column![pause, popout].spacing(4)).padding(8)
@@ -717,7 +730,7 @@ impl Peepers {
         .extend(
             self.flight
                 .status()
-                .map(|status| text(status).size(12).style(text::danger).into()),
+                .map(|status| text(status).size(12).style(styles::text_danger).into()),
         )
         .width(180);
         let content = match self.page {
@@ -759,10 +772,11 @@ impl Peepers {
         column![]
             .extend(self.asking_to_quit.then(quit_prompt))
             .push(row![rail, content].height(Fill))
-            .extend(
-                self.failure
-                    .map(|kind| text!("Sampling failed: {kind}").style(text::danger).into()),
-            )
+            .extend(self.failure.map(|kind| {
+                text!("Sampling failed: {kind}")
+                    .style(styles::text_danger)
+                    .into()
+            }))
             .into()
     }
 }
@@ -771,23 +785,24 @@ impl Peepers {
 fn quit_prompt() -> Element<'static, Message> {
     container(
         row![
-            text("A recording is not saved yet. Save it before quitting?").style(text::danger),
+            text("A recording is not saved yet. Save it before quitting?")
+                .style(styles::text_danger),
             button("Save and quit")
                 .on_press(Message::Quit(Some(Fate::Save)))
-                .style(button::success),
+                .style(styles::button_success),
             button("Discard and quit")
                 .on_press(Message::Quit(Some(Fate::Discard)))
-                .style(button::danger),
+                .style(styles::button_danger),
             button("Keep running")
                 .on_press(Message::KeepRunning)
-                .style(button::secondary),
+                .style(styles::button_secondary),
         ]
         .spacing(8)
         .align_y(iced::Center),
     )
     .padding(8)
     .width(Fill)
-    .style(container::bordered_box)
+    .style(styles::container_bordered_box)
     .into()
 }
 
@@ -795,7 +810,7 @@ fn quit_prompt() -> Element<'static, Message> {
 fn heading(title: &str) -> Element<'_, Message> {
     container(
         row![
-            text(title).size(11).style(text::secondary),
+            text(title).size(11).style(styles::section_heading_muted),
             rule::horizontal(1)
         ]
         .spacing(6)

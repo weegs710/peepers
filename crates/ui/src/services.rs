@@ -1,10 +1,12 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::text::Wrapping;
 use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
-use iced::{Element, Fill, Subscription, Task};
+use iced::{Fill, Subscription, Task};
 use peepers_core::systemd::{self, Action, Active, Bus, Service};
 
 use crate::blocking;
@@ -118,7 +120,7 @@ impl Services {
             return notice::shown(self.notice.as_ref()).map_or_else(
                 || {
                     text("Asking the service manager")
-                        .style(text::secondary)
+                        .style(styles::text_secondary)
                         .into()
                 },
                 |notice| notice.view(Message::Dismiss),
@@ -154,9 +156,9 @@ impl Services {
             .width(Fill),
             table::column(header("Status", Column::Status), |service: &Service| {
                 text(status(service)).style(match service.active {
-                    Active::Active => text::success,
-                    Active::Failed => text::danger,
-                    _ => text::default,
+                    Active::Active => styles::text_success,
+                    Active::Failed => styles::text_danger,
+                    _ => styles::text_default,
                 })
             }),
             table::column(header("Manager", Column::Manager), |service: &Service| {
@@ -176,7 +178,7 @@ impl Services {
                 .label("Only active services")
                 .on_toggle(Message::RunningOnly),
             space::horizontal(),
-            text(format!("{count} services")).style(text::secondary),
+            text(format!("{count} services")).style(styles::text_secondary),
         ]
         .spacing(16)
         .padding(8)
@@ -207,12 +209,12 @@ impl Services {
         let action = |label, action| {
             button(label)
                 .on_press(Message::Control(action))
-                .style(button::secondary)
+                .style(styles::button_secondary)
         };
         Some(
             column![
-                text(&service.name).size(20),
-                text(&service.description).style(text::secondary),
+                text(&service.name).size(20).style(styles::heading),
+                text(&service.description).style(styles::text_secondary),
                 stats([
                     ("Load state", service.load.clone()),
                     ("Active state", status(service)),

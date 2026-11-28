@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 
 use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::apps::{self, App, Scope};
 
 use crate::blocking;
@@ -72,7 +74,7 @@ impl Apps {
     pub fn view(&self) -> Element<'_, Message> {
         let Some(apps) = &self.list else {
             return text("Reading the desktop entries")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let needle = self.filter.to_lowercase();
@@ -119,9 +121,9 @@ impl Apps {
                 .on_toggle(Message::Hidden),
             button("Refresh")
                 .on_press(Message::Refresh)
-                .style(button::secondary),
+                .style(styles::button_secondary),
             space::horizontal(),
-            text(format!("{count} applications")).style(text::secondary),
+            text(format!("{count} applications")).style(styles::text_secondary),
         ]
         .spacing(16)
         .padding(8)
@@ -149,8 +151,8 @@ impl Apps {
 
 fn details(app: &App) -> Element<'_, Message> {
     column![
-        text(&app.name).size(20),
-        text(app.comment.clone().unwrap_or_default()).style(text::secondary),
+        text(&app.name).size(20).style(styles::heading),
+        text(app.comment.clone().unwrap_or_default()).style(styles::text_secondary),
         stats([
             (
                 "Command",

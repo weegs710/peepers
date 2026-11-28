@@ -1,3 +1,5 @@
+use crate::theme::Element;
+use crate::theme::styles;
 mod cpu;
 mod disk;
 mod gpu;
@@ -12,7 +14,7 @@ use std::time::Duration;
 
 use iced::time;
 use iced::widget::{button, column, container, row, scrollable, space, table, text};
-use iced::{Element, Fill, Length, Subscription, Task};
+use iced::{Fill, Length, Subscription, Task};
 use peepers_core::bench::{Event, Gpu, History, Job, Loaded, Outcome, Record, Run};
 
 use crate::blocking;
@@ -350,12 +352,14 @@ impl Benchmarks {
 
     pub fn view<'a>(&'a self, adapters: &'a [peepers_core::gpu::Adapter]) -> Element<'a, Message> {
         let header = row![
-            text("Benchmarks").size(24),
+            text("Benchmarks").size(24).style(styles::heading),
             space::horizontal(),
             match &self.active {
                 Some(active) => row![
-                    text(active.stage).style(text::secondary),
-                    button("Stop").on_press(Message::Stop).style(button::danger)
+                    text(active.stage).style(styles::text_secondary),
+                    button("Stop")
+                        .on_press(Message::Stop)
+                        .style(styles::button_danger)
                 ]
                 .spacing(12)
                 .align_y(iced::Center),
@@ -369,9 +373,9 @@ impl Benchmarks {
                 .width(Fill)
                 .on_press(Message::Select(section))
                 .style(if section == self.section {
-                    button::primary
+                    styles::button_primary
                 } else {
-                    button::text
+                    styles::button_text
                 })
                 .into()
         }))
@@ -407,7 +411,7 @@ impl Benchmarks {
     fn history_table(&self) -> Element<'_, Message> {
         if self.history.is_empty() {
             return text("Benchmark runs will appear here as they complete.")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         }
         let mut records: Vec<&Record> = self.history.records().collect();
@@ -430,11 +434,11 @@ impl Benchmarks {
         ];
         column![
             row![
-                text("History").size(18),
+                text("History").size(18).style(styles::section_heading),
                 space::horizontal(),
                 button("Clear history")
                     .on_press(Message::Clear)
-                    .style(button::secondary)
+                    .style(styles::button_secondary)
             ]
             .align_y(iced::Center),
             scrolling(table(columns, records).padding_x(10).padding_y(2))
@@ -454,8 +458,8 @@ fn page<'a>(
     result: Element<'a, Message>,
 ) -> Element<'a, Message> {
     column![
-        text(title).size(22),
-        text(intro).style(text::secondary),
+        text(title).size(22).style(styles::section_heading),
+        text(intro).style(styles::text_secondary),
         controls,
         result,
     ]
@@ -470,7 +474,7 @@ fn figure<'a>(label: &'a str, value: String, hint: &'a str) -> Element<'a, Messa
         text(label).width(190),
         column![
             text(value).size(18),
-            text(hint).size(12).style(text::secondary)
+            text(hint).size(12).style(styles::text_secondary)
         ]
         .spacing(2)
         .width(Fill),
@@ -480,7 +484,7 @@ fn figure<'a>(label: &'a str, value: String, hint: &'a str) -> Element<'a, Messa
 }
 
 fn not_run<'a>() -> Element<'a, Message> {
-    text("Not run yet").style(text::secondary).into()
+    text("Not run yet").style(styles::text_secondary).into()
 }
 
 fn test(outcome: &Outcome) -> &'static str {

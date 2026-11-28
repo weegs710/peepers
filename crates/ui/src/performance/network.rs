@@ -1,4 +1,5 @@
-use iced::Element;
+use crate::theme::Element;
+
 use iced::widget::space;
 use peepers_core::network::{Interface, Kind};
 use peepers_core::telemetry::Vitals;
@@ -89,13 +90,17 @@ fn graph(history: &History, name: &str) -> Graph {
         history.series(|vitals| find(vitals, name).map_or(0.0, |interface| level(pick(interface))))
     };
     Graph::new(Scale::Fit { floor: RATE_FLOOR })
+        .key("network")
+        .instance(name)
         .line(
             rate(|interface| interface.receive_per_second),
             Tone::Success,
         )
         .named("Receive")
+        .series("receive")
         .line(rate(|interface| interface.send_per_second), Tone::Warning)
         .named("Send")
+        .series("send")
         .readout(as_rate)
 }
 

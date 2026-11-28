@@ -23,7 +23,7 @@ pub fn export(directory: &Path, stem: &str, text: &str) -> Result<PathBuf, Strin
 }
 
 /// Fails rather than replace a file that is already there.
-fn write_new(path: &Path, text: &str) -> io::Result<()> {
+pub(crate) fn write_new(path: &Path, text: &str) -> io::Result<()> {
     File::create_new(path)?.write_all(text.as_bytes())
 }
 
