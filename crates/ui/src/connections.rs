@@ -1,10 +1,12 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::{checkbox, column, container, pick_list, row, space, table, text, text_input};
-use iced::{Element, Fill, Subscription, Task};
+use iced::{Fill, Subscription, Task};
 use peepers_core::connections::{self, Connection, Endpoint, Exposure, Protocol, State};
 
 use crate::blocking;
@@ -119,7 +121,7 @@ impl Connections {
     pub fn view<'a>(&'a self, processes: &'a Processes) -> Element<'a, Message> {
         let Some(snapshot) = &self.snapshot else {
             return text("Reading the socket tables")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let needle = self.filter.to_lowercase();
@@ -181,7 +183,7 @@ impl Connections {
                 .label("UNIX sockets")
                 .on_toggle(Message::UnixSockets),
             space::horizontal(),
-            text(format!("{count} connections")).style(text::secondary),
+            text(format!("{count} connections")).style(styles::text_secondary),
         ]
         .spacing(16)
         .padding(8)

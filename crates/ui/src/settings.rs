@@ -1,17 +1,19 @@
+use crate::theme::styles;
+use crate::theme::{Element, Theme};
 use std::env;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use iced::widget::{checkbox, column, container, pick_list, row, slider, text};
-use iced::{Element, Subscription, Task, Theme, event, keyboard, time};
+use iced::widget::{button, checkbox, column, container, pick_list, row, slider, text};
+use iced::{Subscription, Task, event, keyboard, time};
 use serde::{Deserialize, Serialize};
 
 use crate::Page;
 use crate::blocking;
 use crate::notice::Notice;
-use crate::theme::{self, Noctalia};
+use crate::theme::{self, CustomThemes, Noctalia};
 
 mod file;
 
@@ -254,6 +256,8 @@ pub fn keys() -> Subscription<Message> {
 #[derive(Debug, Clone)]
 pub enum Message {
     Theme(Theme),
+    CreateThemeTemplate,
+    ThemeTemplateCreated(Result<PathBuf, String>),
     StartPage(Page),
     Temperature(Temperature),
     Interval(Interval),
@@ -281,7 +285,9 @@ pub struct Preferences {
     /// The text size under the pointer while the slider is held.
     dragging: Option<u8>,
     notice: Option<Notice>,
+    template_pending: bool,
     noctalia: Noctalia,
+    custom: CustomThemes,
 }
 
 impl Preferences {
@@ -295,18 +301,22 @@ impl Preferences {
                 settings,
                 path: Some(path),
                 dragging: None,
+                template_pending: false,
                 notice: None,
                 noctalia,
+                custom: CustomThemes::at(Settings::directory().join("themes")),
             },
             Err(error) => Self {
                 settings: Settings::default(),
                 base: Settings::default(),
                 path: Some(path),
                 dragging: None,
+                template_pending: false,
                 notice: Some(Notice::failure(format!(
                     "The settings file could not be read, so the defaults are in use: {error}"
                 ))),
                 noctalia,
+                custom: CustomThemes::at(Settings::directory().join("themes")),
             },
         };
         preferences.recheck();
@@ -318,6 +328,7 @@ impl Preferences {
     }
 
     fn recheck(&mut self) {
+        self.custom.refresh(&self.settings.appearance.theme);
         if self.follows_noctalia() {
             self.noctalia.refresh();
         }
@@ -327,14 +338,22 @@ impl Preferences {
     pub fn theme(&self) -> Theme {
         if self.follows_noctalia() {
             self.noctalia.theme().cloned().unwrap_or(Theme::Dark)
+        } else if self.settings.appearance.theme.starts_with("Custom: ") {
+            self.custom
+                .theme(&self.settings.appearance.theme)
+                .cloned()
+                .unwrap_or(Theme::Dark)
         } else {
             self.settings.theme()
         }
     }
 
-    /// Noctalia's file is only watched while its theme is the one chosen.
-    pub fn subscription(&self) -> Subscription<Message> {
-        if self.follows_noctalia() {
+    /// Also discovers files added while Settings is open.
+    pub fn subscription(&self, settings_visible: bool) -> Subscription<Message> {
+        if self.follows_noctalia()
+            || self.settings.appearance.theme.starts_with("Custom: ")
+            || (settings_visible && self.custom.is_configured())
+        {
             time::every(RECHECK).map(|_| Message::Recheck)
         } else {
             Subscription::none()
@@ -343,6 +362,32 @@ impl Preferences {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::CreateThemeTemplate => {
+                if self.template_pending {
+                    return Task::none();
+                }
+                self.template_pending = true;
+                let directory = self.custom.directory().map_or_else(
+                    || Settings::directory().join("themes"),
+                    std::path::Path::to_path_buf,
+                );
+                return blocking::run(move || theme::write_template(&directory))
+                    .map(Message::ThemeTemplateCreated);
+            }
+            Message::ThemeTemplateCreated(result) => {
+                self.template_pending = false;
+                self.notice = Some(match result {
+                    Ok(path) => {
+                        self.recheck();
+                        Notice::note(format!(
+                            "Created {}. Select Custom: default, then edit this file to change colours.",
+                            path.display()
+                        ))
+                    }
+                    Err(error) => Notice::failure(error),
+                });
+                return Task::none();
+            }
             Message::Theme(theme) => {
                 self.settings.appearance.theme = theme.to_string();
                 self.recheck();
@@ -395,17 +440,40 @@ impl Preferences {
 
     /// `tray_error` is why the tray icon is missing when it was asked for.
     pub fn view<'a>(&'a self, tray_error: Option<&'a str>) -> Element<'a, Message> {
+        let themes = self.custom.choices();
+        let selected = themes
+            .iter()
+            .find(|theme| theme.to_string() == self.settings.appearance.theme)
+            .cloned();
         column![
-            text("Settings").size(24),
+            text("Settings").size(24).style(styles::heading),
             column![setting(
                 "Theme",
-                pick_list(theme::all(), Some(self.settings.theme()), Message::Theme).width(CONTROL)
+                pick_list(themes, selected, Message::Theme).width(CONTROL)
             )]
             .extend(
                 self.noctalia
                     .problem()
                     .filter(|_| self.follows_noctalia())
-                    .map(|problem| text(problem).style(text::secondary).into()),
+                    .or_else(|| self.custom.problem(&self.settings.appearance.theme))
+                    .map(|problem| text(problem).style(styles::text_secondary).into()),
+            )
+            .push(
+                button(if self.template_pending {
+                    "Creating theme template…"
+                } else {
+                    "Create theme template"
+                })
+                .on_press_maybe((!self.template_pending).then_some(Message::CreateThemeTemplate))
+                .style(styles::button_secondary)
+            )
+            .push(
+                text(format!(
+                    "Custom themes: {}",
+                    Settings::directory().join("themes").display()
+                ))
+                .size(12)
+                .style(styles::text_secondary)
             )
             .spacing(8),
             setting(
@@ -461,9 +529,9 @@ impl Preferences {
                 .on_toggle(Message::Tray),
             text(format!("Saved to {}", Settings::path().display()))
                 .size(12)
-                .style(text::secondary),
+                .style(styles::text_secondary),
         ]
-        .extend(tray_error.map(|error| text(error).style(text::danger).into()))
+        .extend(tray_error.map(|error| text(error).style(styles::text_danger).into()))
         .extend(
             self.notice
                 .as_ref()
@@ -488,15 +556,15 @@ impl Preferences {
                     .size(size(16.0)),
                 text("Captions and the small figures beside them read like this.")
                     .size(size(12.0))
-                    .style(text::secondary),
+                    .style(styles::text_secondary),
                 text("100%   75%   50%   25%   the scale down the side of a graph")
                     .size(size(11.0))
-                    .style(text::secondary),
+                    .style(styles::text_secondary),
             ]
             .spacing(size(6.0)),
         )
         .padding(12)
-        .style(container::bordered_box)
+        .style(styles::container_bordered_box)
         .into()
     }
 }
@@ -537,6 +605,112 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    #[test]
+    fn themes_reload_after_atomic_replacement_with_preserved_time_and_size() {
+        let scratch = Scratch::new("theme-atomic-replacement");
+        let path = scratch.0.join("atomic.toml");
+        fs::write(&path, "primary = '#123456'").unwrap();
+        let original = fs::metadata(&path).unwrap();
+        let mut themes = CustomThemes::at(scratch.0.clone());
+        themes.refresh("Custom: atomic");
+        assert_eq!(
+            themes.theme("Custom: atomic").unwrap().palette().primary,
+            "#123456".parse().unwrap()
+        );
+        let replacement = scratch.0.join("replacement");
+        fs::write(&replacement, "primary = '#654321'").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original.modified().unwrap()))
+            .unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        let replaced = fs::metadata(&path).unwrap();
+        assert_eq!(original.modified().unwrap(), replaced.modified().unwrap());
+        assert_eq!(original.len(), replaced.len());
+        themes.refresh("Custom: atomic");
+        assert_eq!(
+            themes.theme("Custom: atomic").unwrap().palette().primary,
+            "#654321".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn template_button_creates_discovers_and_preserves_an_editable_theme() {
+        let scratch = Scratch::new("theme-template");
+        let directory = scratch.0.join("themes");
+        let mut preferences = Preferences {
+            custom: CustomThemes::at(directory.clone()),
+            ..Preferences::default()
+        };
+        let messages = {
+            let mut simulator = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(1280.0, 900.0),
+                preferences.view(None),
+            );
+            simulator.click("Create theme template").unwrap();
+            simulator.into_messages().collect::<Vec<_>>()
+        };
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::CreateThemeTemplate]
+        ));
+        let task = preferences.update(messages.into_iter().next().unwrap());
+        assert!(preferences.template_pending);
+        for message in messages_of(task) {
+            drop(preferences.update(message));
+        }
+        assert!(!preferences.template_pending);
+        let path = directory.join("default.toml");
+        assert_eq!(fs::read_to_string(&path).unwrap(), theme::TEMPLATE);
+        assert!(
+            preferences
+                .custom
+                .choices()
+                .iter()
+                .any(|theme| theme.to_string() == "Custom: default")
+        );
+        assert_eq!(preferences.settings.appearance.theme, "Dark");
+        fs::write(&path, "primary = '#123456'").unwrap();
+        for message in messages_of(preferences.update(Message::CreateThemeTemplate)) {
+            assert!(
+                matches!(&message, Message::ThemeTemplateCreated(Err(error)) if error.contains("already exists"))
+            );
+            drop(preferences.update(message));
+        }
+        assert!(!preferences.template_pending);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "primary = '#123456'");
+        let mut simulator = iced_test::Simulator::with_size(
+            iced::Settings::default(),
+            iced::Size::new(1280.0, 900.0),
+            preferences.view(None),
+        );
+        let message = format!(
+            "{} already exists; your file was not overwritten.",
+            path.display()
+        );
+        assert!(simulator.find(message.as_str()).is_ok());
+    }
+
+    #[test]
+    fn template_creation_reports_an_unwritable_destination() {
+        let scratch = Scratch::new("theme-template-failure");
+        let directory = scratch.0.join("not-a-directory");
+        fs::write(&directory, "keep this file").unwrap();
+        let mut preferences = Preferences {
+            custom: CustomThemes::at(directory.clone()),
+            ..Preferences::default()
+        };
+        for message in messages_of(preferences.update(Message::CreateThemeTemplate)) {
+            assert!(matches!(&message, Message::ThemeTemplateCreated(Err(_))));
+            drop(preferences.update(message));
+        }
+        assert!(!preferences.template_pending);
+        assert_eq!(fs::read_to_string(directory).unwrap(), "keep this file");
+    }
 
     fn text_size(text_size: u8) -> Settings {
         Settings {
@@ -810,7 +984,7 @@ error = \"#ff6b7a\"
                 .noctalia
                 .problem()
                 .unwrap()
-                .contains("has not written")
+                .contains("has not been written")
         );
         fs::write(&file, RENDERED).unwrap();
         drop(preferences.update(Message::Recheck));
@@ -848,5 +1022,88 @@ error = \"#ff6b7a\"
         drop(preferences.update(Message::Recheck));
         assert!(preferences.noctalia.theme().is_none());
         assert_eq!(preferences.theme(), Theme::Dark);
+    }
+    #[test]
+    fn custom_themes_are_discovered_selected_saved_reloaded_and_removed() {
+        let scratch = Scratch::new("custom-themes");
+        let directory = scratch.0.join("themes");
+        let path = scratch.0.join("settings.toml");
+        let mut preferences = Preferences {
+            path: Some(path.clone()),
+            custom: CustomThemes::at(directory.clone()),
+            ..Preferences::default()
+        };
+        preferences.recheck();
+        fs::create_dir_all(&directory).unwrap();
+        let file = directory.join("Arcane Neon.toml");
+        fs::write(&file, "success = '#B66BFF'").unwrap();
+        preferences.recheck();
+        preferences.settings.appearance.theme = theme::NOCTALIA.to_owned();
+        let messages = {
+            let mut simulator = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(1280.0, 800.0),
+                preferences.view(None),
+            );
+            // Pick lists do not expose their labels to iced's text selector. Ctrl-scroll
+            // over the control selects its next entry, the first custom file after Noctalia.
+            let label = simulator.find("Theme").unwrap().bounds();
+            simulator.point_at(iced::Point::new(label.x + 236.0 + 100.0, label.center_y()));
+            simulator.simulate([
+                iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL)),
+                iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                    delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+                }),
+            ]);
+            simulator.into_messages().collect::<Vec<_>>()
+        };
+        assert!(messages.iter().any(|message| matches!(message, Message::Theme(theme) if theme.to_string() == "Custom: Arcane Neon")));
+        for message in messages {
+            drop(preferences.update(message));
+        }
+        assert_eq!(preferences.theme().palette().success, colour("#B66BFF"));
+        let saved = preferences.write().unwrap()().unwrap();
+        drop(preferences.update(Message::Saved(Ok(saved))));
+        assert_eq!(
+            file::read(&path).unwrap().appearance.theme,
+            "Custom: Arcane Neon"
+        );
+        let mut restarted = Preferences {
+            settings: file::read(&path).unwrap(),
+            custom: CustomThemes::at(directory),
+            ..Preferences::default()
+        };
+        restarted.recheck();
+        assert_eq!(restarted.theme().palette().success, colour("#B66BFF"));
+        fs::write(&file, "success = '#49E9FF'\n").unwrap();
+        restarted.recheck();
+        assert_eq!(restarted.theme().palette().success, colour("#49E9FF"));
+        fs::write(&file, "success = 'invalid'").unwrap();
+        restarted.recheck();
+        assert_eq!(restarted.theme(), Theme::Dark);
+        assert!(
+            restarted
+                .custom
+                .problem("Custom: Arcane Neon")
+                .unwrap()
+                .contains("not a colour")
+        );
+        fs::remove_file(&file).unwrap();
+        restarted.recheck();
+        assert!(restarted.custom.problem("Custom: Arcane Neon").is_some());
+        fs::write(&file, "warning = '#FF547D'").unwrap();
+        restarted.recheck();
+        assert_eq!(restarted.theme().palette().warning, colour("#FF547D"));
+        drop(restarted.update(Message::Theme(Theme::Light)));
+        assert_eq!(restarted.theme(), Theme::Light);
+        fs::remove_file(file).unwrap();
+        restarted.recheck();
+        assert!(
+            !restarted
+                .custom
+                .choices()
+                .iter()
+                .any(|theme| theme.to_string().starts_with("Custom:"))
+        );
     }
 }

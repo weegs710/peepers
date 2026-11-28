@@ -1,9 +1,10 @@
+use crate::theme::{Element, Theme};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, overlay, renderer};
 use iced::theme::palette::Extended;
 use iced::widget::table::Column;
-use iced::{Color, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector, mouse, touch};
+use iced::{Color, Event, Length, Rectangle, Renderer, Size, Vector, mouse, touch};
 
 const PADDING_X: f32 = 10.0;
 const PADDING_Y: f32 = 2.0;
@@ -12,7 +13,7 @@ const PADDING_Y: f32 = 2.0;
 /// one is marked, and pressing anywhere on a row sends `pick` for it. A control inside a cell keeps
 /// its own presses.
 pub fn table<'a, 'b, T: Clone, Message: Clone + 'a>(
-    columns: impl IntoIterator<Item = Column<'a, 'b, T, Message>>,
+    columns: impl IntoIterator<Item = Column<'a, 'b, T, Message, Theme>>,
     rows: Vec<T>,
     pick: impl Fn(&T) -> Message,
     chosen: impl Fn(&T) -> bool,
@@ -224,7 +225,10 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Selectable<'_, Message
         let hovered = cursor
             .position_over(layout.bounds())
             .and_then(|point| rows.iter().position(|row| row.contains(point)));
-        for (bounds, color) in shaded(&rows, hovered, self.selected, theme.extended_palette()) {
+        let mut palette = *theme.extended_palette();
+        palette.background.strong.color = theme.color("row_hover", palette.background.strong.color);
+        palette.primary.weak.color = theme.color("row_selected", palette.primary.weak.color);
+        for (bounds, color) in shaded(&rows, hovered, self.selected, &palette) {
             renderer::Renderer::fill_quad(
                 renderer,
                 renderer::Quad {

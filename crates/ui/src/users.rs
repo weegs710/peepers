@@ -1,10 +1,12 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::{button, column, container, row, space, table, text};
-use iced::{Element, Fill, Right, Subscription, Task};
+use iced::{Fill, Right, Subscription, Task};
 use peepers_core::process::Process;
 use peepers_core::sessions::{self, Action, Session};
 
@@ -180,19 +182,21 @@ impl Users {
 
         let actions = selected.map(|uid| {
             row![
-                text(format!("{}", processes.user_name(uid))).size(20),
+                text(format!("{}", processes.user_name(uid)))
+                    .size(20)
+                    .style(styles::heading),
                 notice::shown(self.notice.as_ref()).map_or_else(
                     || space::horizontal().into(),
                     |notice| notice.view(Message::Dismiss)
                 ),
                 button("Lock")
                     .on_press_maybe((sessions(uid) > 0).then_some(Message::Control(Action::Lock)))
-                    .style(button::secondary),
+                    .style(styles::button_secondary),
                 button("Sign off")
                     .on_press_maybe(
                         (sessions(uid) > 0).then_some(Message::Control(Action::SignOff))
                     )
-                    .style(button::danger),
+                    .style(styles::button_danger),
             ]
             .spacing(12)
             .padding(12)

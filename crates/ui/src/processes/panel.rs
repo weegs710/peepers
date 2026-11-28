@@ -1,9 +1,11 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
+use iced::Fill;
 use iced::widget::{button, checkbox, column, container, pick_list, row, space, text};
-use iced::{Element, Fill};
 use peepers_core::process::{Details, Process, Signal};
 
 use super::Message;
@@ -97,12 +99,12 @@ pub fn view<'a>(panel: &Panel<'a>) -> Element<'a, Message> {
     let signal = |label, signal| {
         button(label)
             .on_press(Message::Signal(signal))
-            .style(button::secondary)
+            .style(styles::button_secondary)
     };
     let tree = |label, signal| {
         button(label)
             .on_press(Message::SignalTree(signal))
-            .style(button::secondary)
+            .style(styles::button_secondary)
     };
     let actions = row![
         signal("End task", Signal::Terminate),
@@ -113,24 +115,26 @@ pub fn view<'a>(panel: &Panel<'a>) -> Element<'a, Message> {
         signal("Resume", Signal::Continue),
         button("Sample")
             .on_press(Message::Sample)
-            .style(button::secondary),
+            .style(styles::button_secondary),
         space::horizontal(),
-        text("Priority").style(text::secondary),
+        text("Priority").style(styles::text_secondary),
         pick_list(Priority::ALL, Priority::of(process.nice), Message::Priority),
     ]
     .spacing(8)
     .align_y(iced::Center);
 
     column![
-        text(format!("{} ({})", process.name, process.pid)).size(20),
-        text(details.command.clone().unwrap_or_else(unavailable)).style(text::secondary),
+        text(format!("{} ({})", process.name, process.pid))
+            .size(20)
+            .style(styles::heading),
+        text(details.command.clone().unwrap_or_else(unavailable)).style(styles::text_secondary),
         text(format!(
             "{}    {}",
             path(&details.executable),
             path(&details.directory)
         ))
         .size(12)
-        .style(text::secondary),
+        .style(styles::text_secondary),
         stats(facts),
         affinity(panel.cpus, details.affinity.as_deref()),
         actions,
@@ -144,11 +148,13 @@ pub fn view<'a>(panel: &Panel<'a>) -> Element<'a, Message> {
 fn affinity<'a>(cpus: &[usize], allowed: Option<&[usize]>) -> Element<'a, Message> {
     let Some(allowed) = allowed else {
         return text("Processor affinity: not readable")
-            .style(text::secondary)
+            .style(styles::text_secondary)
             .into();
     };
     column![
-        text("Processor affinity").style(text::secondary).size(12),
+        text("Processor affinity")
+            .style(styles::text_secondary)
+            .size(12),
         container(
             row(cpus.iter().map(|&cpu| {
                 checkbox(allowed.contains(&cpu))

@@ -1,8 +1,10 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::fmt;
 use std::path::PathBuf;
 
 use iced::widget::{column, pick_list, row, text, text_input};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::bench::{Disk, Job, Medium, Outcome};
 use peepers_core::volumes::{self, Volume};
 
@@ -167,7 +169,7 @@ fn results(disk: &Disk) -> Element<'_, Root> {
         )),
         text(caveat)
             .size(13)
-            .style(if failed { text::danger } else { text::secondary }),
+            .style(if failed { styles::text_danger } else { styles::text_secondary }),
         figure(
             "Sequential write",
             format::rate(disk.write),

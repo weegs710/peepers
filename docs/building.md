@@ -34,7 +34,7 @@ $ nix build .#default
 $ ./result/bin/peepers
 ```
 
-The package finds wayland, libxkbcommon and the Vulkan loader through the binary's RPATH, so it runs without `nix-shell`, and the commands peepers runs do not inherit an `LD_LIBRARY_PATH`. It also installs the desktop entry and the icon under `share/`.
+The package finds wayland, libxkbcommon and the Vulkan loader through the binary's RPATH, so it runs without `nix-shell`, and the commands peepers runs do not inherit an `LD_LIBRARY_PATH`. It also installs the desktop entry and icon under `share/`, the theme templates under `share/peepers/themes/`, and the theme guide under `share/doc/peepers/`.
 
 ## Tests
 

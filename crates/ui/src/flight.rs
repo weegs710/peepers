@@ -1,3 +1,5 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,7 +8,7 @@ use std::time::Duration;
 
 use iced::time;
 use iced::widget::{button, column, container, pick_list, row, slider, space, text, text_input};
-use iced::{Element, Fill, Subscription, Task};
+use iced::{Fill, Subscription, Task};
 use peepers_core::telemetry::Vitals;
 use peepers_core::trace::{Frame, Recorder, Trace};
 
@@ -362,32 +364,34 @@ impl Flight {
         let controls: Element<'_, Message> = match (&self.recorder, &self.unsaved) {
             (Some(_), _) => button("Stop and save")
                 .on_press(Message::Stop)
-                .style(button::danger)
+                .style(styles::button_danger)
                 .into(),
-            (None, Some(_)) if self.saving => button("Saving").style(button::secondary).into(),
+            (None, Some(_)) if self.saving => {
+                button("Saving").style(styles::button_secondary).into()
+            }
             (None, Some(_)) if self.doomed == Some(Doomed::Unsaved) => {
                 confirmation("Delete this unsaved recording?".to_owned())
             }
             (None, Some(_)) => row![
                 button("Save again")
                     .on_press(Message::Stop)
-                    .style(button::success),
+                    .style(styles::button_success),
                 button("Delete recording")
                     .on_press(Message::Ask(Doomed::Unsaved))
-                    .style(button::secondary),
+                    .style(styles::button_secondary),
             ]
             .spacing(8)
             .into(),
             (None, None) => button("Start recording")
                 .on_press(Message::Start)
-                .style(button::success)
+                .style(styles::button_success)
                 .into(),
         };
         let header = row![
-            text("Flight recorder").size(24),
+            text("Flight recorder").size(24).style(styles::heading),
             controls,
             text(self.status().unwrap_or_else(|| "Not recording".to_owned()))
-                .style(text::secondary),
+                .style(styles::text_secondary),
             text_input("Name this recording (optional)", &self.label)
                 .on_input(Message::Label)
                 .width(260),
@@ -414,7 +418,7 @@ impl Flight {
     fn recordings(&self) -> Element<'_, Message> {
         if self.files.is_empty() {
             return text(format!("No recordings in {}", self.directory))
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         }
         let rows = self.files.iter().map(|path| {
@@ -424,10 +428,10 @@ impl Flight {
                 row![
                     button("Replay")
                         .on_press(Message::Open(path.clone()))
-                        .style(button::secondary),
+                        .style(styles::button_secondary),
                     button("Delete")
                         .on_press(Message::Ask(Doomed::One(path.clone())))
-                        .style(button::secondary),
+                        .style(styles::button_secondary),
                 ]
                 .spacing(8)
                 .into()
@@ -448,12 +452,12 @@ impl Flight {
         } else {
             button("Delete all")
                 .on_press(Message::Ask(Doomed::All))
-                .style(button::secondary)
+                .style(styles::button_secondary)
                 .into()
         };
         column![
             row![
-                text(format!("{} recordings", self.files.len())).style(text::secondary),
+                text(format!("{} recordings", self.files.len())).style(styles::text_secondary),
                 space::horizontal(),
                 everything,
             ]
@@ -468,13 +472,13 @@ impl Flight {
 /// A question with the button that confirms it and the one that backs out.
 fn confirmation<'a>(question: String) -> Element<'a, Message> {
     row![
-        text(question).style(text::danger),
+        text(question).style(styles::text_danger),
         button("Delete")
             .on_press(Message::Confirm)
-            .style(button::danger),
+            .style(styles::button_danger),
         button("Keep")
             .on_press(Message::Cancel)
-            .style(button::secondary),
+            .style(styles::button_secondary),
     ]
     .spacing(8)
     .align_y(iced::Center)
@@ -491,7 +495,7 @@ fn replay_view(replay: &Replay) -> Element<'_, Message> {
             format::date_time(header.recorded_at),
             header.kernel
         ))
-        .style(text::secondary),
+        .style(styles::text_secondary),
         scrolling(flow(CARD_WIDTH, CARD_SPACING, move || cards(replay))).height(Fill),
     ]
     .spacing(12)
@@ -505,7 +509,7 @@ fn controls(replay: &Replay) -> Element<'_, Message> {
     row![
         button("Close")
             .on_press(Message::Close)
-            .style(button::secondary),
+            .style(styles::button_secondary),
         button(if replay.playing { "Pause" } else { "Play" }).on_press(Message::Play),
         pick_list(Speed::ALL, Some(replay.speed), Message::Speed),
         slider(0..=last, position, Message::Seek).width(Fill),
@@ -561,16 +565,20 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
             "CPU",
             format!("{:.0}%", at.cpu),
             plot.graph(percent)
+                .key("flight.cpu")
                 .line(plot.series(|frame| frame.cpu), Tone::Primary)
                 .named("Utilization")
+                .series("utilization")
                 .readout(as_percent),
         ),
         card(
             "Memory",
             format!("{:.0}%", at.memory),
             plot.graph(percent)
+                .key("flight.memory")
                 .line(plot.series(|frame| frame.memory), Tone::Primary)
                 .named("In use")
+                .series("used")
                 .readout(as_percent),
         ),
     ];
@@ -584,16 +592,20 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
                 format::rate(disk.write)
             ),
             plot.graph(Scale::Fit { floor: 1_048_576.0 })
+                .key("flight.disk")
+                .instance(name)
                 .line(
                     plot.series(|frame| level(frame.disks[index].read)),
                     Tone::Success,
                 )
                 .named("Read")
+                .series("read")
                 .line(
                     plot.series(|frame| level(frame.disks[index].write)),
                     Tone::Warning,
                 )
                 .named("Write")
+                .series("write")
                 .readout(as_rate),
         ));
     }
@@ -607,16 +619,20 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
                 format::rate(network.send)
             ),
             plot.graph(Scale::Fit { floor: 131_072.0 })
+                .key("flight.network")
+                .instance(name)
                 .line(
                     plot.series(|frame| level(frame.interfaces[index].receive)),
                     Tone::Success,
                 )
                 .named("Receive")
+                .series("receive")
                 .line(
                     plot.series(|frame| level(frame.interfaces[index].send)),
                     Tone::Warning,
                 )
                 .named("Send")
+                .series("send")
                 .readout(as_rate),
         ));
     }
@@ -625,10 +641,14 @@ fn cards(replay: &Replay) -> Vec<Element<'_, Message>> {
             &format!("GPU {name}"),
             format!("{:.0}%", at.gpus[index].busy),
             plot.graph(percent)
+                .key("flight.gpu")
+                .instance(name)
                 .line(plot.series(|frame| frame.gpus[index].busy), Tone::Primary)
                 .named("Utilization")
+                .series("utilization")
                 .line(plot.series(|frame| frame.gpus[index].memory), Tone::Warning)
                 .named("Video memory")
+                .series("memory")
                 .readout(as_percent),
         ));
     }
@@ -658,8 +678,11 @@ fn sensor_card<'a>(replay: &'a Replay, plot: &Plot<'_>) -> Option<Element<'a, Me
                     channel.unit
                 ),
                 plot.graph(Scale::Fit { floor: 10.0 })
+                    .key("flight.sensor")
+                    .instance(&channel.label)
                     .line(plot.series(|frame| frame.sensors[index]), Tone::Primary)
                     .named(channel.label.clone())
+                    .series("value")
                     .readout(move |value| format!("{value:.1} {unit}")),
             ),
         ]
@@ -672,9 +695,9 @@ fn card<'a>(title: &str, current: String, graph: Graph) -> Element<'a, Message> 
     container(
         column![
             row![
-                text(title.to_owned()),
+                text(title.to_owned()).style(styles::section_heading),
                 space::horizontal(),
-                text(current).style(text::secondary)
+                text(current).style(styles::text_secondary)
             ],
             container(graph.view()).height(LABELLED_HEIGHT),
         ]
@@ -682,7 +705,7 @@ fn card<'a>(title: &str, current: String, graph: Graph) -> Element<'a, Message> 
     )
     .width(Fill)
     .padding(10)
-    .style(container::rounded_box)
+    .style(styles::container_rounded_box)
     .into()
 }
 

@@ -1,4 +1,6 @@
-use iced::Element;
+use crate::theme::Element;
+use crate::theme::styles;
+
 use iced::widget::{column, row, space, text};
 use peepers_core::disk::{Disk, Kind};
 use peepers_core::health::{Ata, Health, Nvme};
@@ -23,8 +25,11 @@ pub fn card(history: &History, name: &str) -> Card {
         title: format!("Disk {name}"),
         value: format!("{active:.0}%"),
         graph: Graph::new(Scale::Fixed(100.0))
+            .key("disk.activity")
+            .instance(name)
             .line(history.series(active_of(name)), Tone::Primary)
             .named("Active time")
+            .series("active")
             .readout(as_percent),
     }
 }
@@ -41,16 +46,20 @@ pub fn view<'a, Message: 'a>(
         return space().into();
     };
     let rates = Graph::new(Scale::Fit { floor: RATE_FLOOR })
+        .key("disk.io")
+        .instance(name)
         .line(
             history.series(rate_of(name, |disk| disk.read_per_second)),
             Tone::Success,
         )
         .named("Read")
+        .series("read")
         .line(
             history.series(rate_of(name, |disk| disk.write_per_second)),
             Tone::Warning,
         )
         .named("Write")
+        .series("write")
         .readout(as_rate);
     let temperature = disk
         .sensors
@@ -86,7 +95,7 @@ pub fn view<'a, Message: 'a>(
 }
 
 fn wellness<'a, Message: 'a>(health: Option<&Result<Health, String>>) -> Element<'a, Message> {
-    let note = |words: String| text(words).style(text::secondary).into();
+    let note = |words: String| text(words).style(styles::text_secondary).into();
     let report = match health {
         None => return note("Reading the drive's health".to_owned()),
         Some(Err(error)) => return note(format!("Health unavailable: {error}")),
@@ -94,16 +103,20 @@ fn wellness<'a, Message: 'a>(health: Option<&Result<Health, String>>) -> Element
     };
     let concerns = report.concerns();
     let verdict = if concerns.is_empty() {
-        text("No problems reported").style(text::success)
+        text("No problems reported").style(styles::text_success)
     } else {
-        text(concerns.join(", ")).style(text::danger)
+        text(concerns.join(", ")).style(styles::text_danger)
     };
     let facts = match report {
         Health::Nvme(nvme) => nvme_facts(nvme),
         Health::Ata(ata) => ata_facts(ata),
     };
     column![
-        row![text("Health").size(18), verdict].spacing(12),
+        row![
+            text("Health").size(18).style(styles::section_heading),
+            verdict
+        ]
+        .spacing(12),
         stats(facts)
     ]
     .spacing(10)

@@ -1,3 +1,5 @@
+use crate::theme::Element;
+use crate::theme::styles;
 mod panel;
 mod rows;
 
@@ -9,7 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use iced::widget::{button, checkbox, column, container, row, space, table, text, text_input};
-use iced::{Element, Fill, Right, Task};
+use iced::{Fill, Right, Task};
 use peepers_core::process::{self, Details, Observation, Process, Signal};
 use peepers_core::telemetry::Sample;
 use peepers_core::users::Users;
@@ -301,7 +303,7 @@ impl Processes {
                 .on_submit(Message::Run)
                 .width(240),
             button("Run").on_press(Message::Run),
-            text(format!("{count} processes")).style(text::secondary),
+            text(format!("{count} processes")).style(styles::text_secondary),
         ]
         .spacing(16)
         .padding(8)
@@ -394,7 +396,7 @@ fn name(row: Row<'_>) -> Element<'_, Message> {
         button(text(if row.collapsed { "+" } else { "-" }))
             .on_press(Message::Collapse(row.process.pid))
             .padding([0, 6])
-            .style(button::text)
+            .style(styles::button_text)
             .into()
     } else {
         space().width(24).into()

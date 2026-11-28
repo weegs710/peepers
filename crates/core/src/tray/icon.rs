@@ -21,6 +21,34 @@ const SAMPLES: usize = SIZE - PLOT_X - 1;
 const BACKGROUND: [u8; 3] = [0x24, 0x24, 0x24];
 const INK: [u8; 3] = [0xe0, 0xe0, 0xe0];
 
+/// Opaque colours for one miniature graph. Load thresholds remain 60% and 85%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphColors {
+    pub background: [u8; 3],
+    pub text: [u8; 3],
+    pub low: [u8; 3],
+    pub medium: [u8; 3],
+    pub high: [u8; 3],
+}
+
+impl Default for GraphColors {
+    fn default() -> Self {
+        Self {
+            background: BACKGROUND,
+            text: INK,
+            low: [0x4c, 0xaf, 0x50],
+            medium: [0xff, 0xb3, 0x00],
+            high: [0xe5, 0x39, 0x35],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IconColors {
+    pub cpu: GraphColors,
+    pub memory: GraphColors,
+}
+
 const CPU_LABEL: [&str; 7] = [
     ".###.", "#...#", "#....", "#....", "#....", "#...#", ".###.",
 ];
@@ -57,6 +85,7 @@ impl fmt::Display for Gauges {
 /// The latest readings, oldest first, which the icon draws as a trace for each gauge.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(super) struct Trace {
+    pub(super) colors: IconColors,
     cpu: [f32; SAMPLES],
     memory: [f32; SAMPLES],
 }
@@ -92,26 +121,34 @@ impl Trace {
     /// turning from green to red as it climbs.
     fn raster(&self) -> Vec<u8> {
         let mut data = vec![0; SIZE * SIZE * 4];
-        let panels = [(&CPU_LABEL, &self.cpu), (&MEMORY_LABEL, &self.memory)];
-        for (index, (label, readings)) in panels.into_iter().enumerate() {
+        let panels = [
+            (&CPU_LABEL, &self.cpu, self.colors.cpu),
+            (&MEMORY_LABEL, &self.memory, self.colors.memory),
+        ];
+        for (index, (label, readings, colors)) in panels.into_iter().enumerate() {
             let top = index * (PANEL_HEIGHT + GAP);
             for row in top..top + PANEL_HEIGHT {
                 for column in 0..SIZE {
-                    paint(&mut data, row, column, BACKGROUND);
+                    paint(&mut data, row, column, colors.background);
                 }
             }
             let label_top = top + (PANEL_HEIGHT - label.len()) / 2;
             for (y, line) in label.iter().enumerate() {
                 for (x, mark) in line.bytes().enumerate() {
                     if mark == b'#' {
-                        paint(&mut data, label_top + y, LABEL_X + x, INK);
+                        paint(&mut data, label_top + y, LABEL_X + x, colors.text);
                     }
                 }
             }
             let bottom = top + PLOT_TOP + usize::from(PLOT_ROWS) - 1;
             for (offset, &level) in readings.iter().enumerate() {
                 for lit in 0..rows(level) {
-                    paint(&mut data, bottom - lit, PLOT_X + offset, colour(level));
+                    paint(
+                        &mut data,
+                        bottom - lit,
+                        PLOT_X + offset,
+                        colour(level, colors),
+                    );
                 }
             }
         }
@@ -148,13 +185,13 @@ fn rows(level: f32) -> usize {
     (level.clamp(0.0, 100.0) / 100.0 * f32::from(PLOT_ROWS)).round() as usize
 }
 
-fn colour(level: f32) -> [u8; 3] {
+fn colour(level: f32, colors: GraphColors) -> [u8; 3] {
     if level < 60.0 {
-        [0x4c, 0xaf, 0x50]
+        colors.low
     } else if level < 85.0 {
-        [0xff, 0xb3, 0x00]
+        colors.medium
     } else {
-        [0xe5, 0x39, 0x35]
+        colors.high
     }
 }
 
@@ -300,5 +337,26 @@ mod tests {
             memory: 41.6,
         });
         assert_eq!(trace.latest().to_string(), "CPU 12%   Memory 42%");
+    }
+    #[test]
+    fn recoloring_updates_existing_history_and_each_panel_independently() {
+        let mut trace = traced(&[(50.0, 100.0)]);
+        let old = trace.pixmaps();
+        trace.colors.cpu.low = [1, 2, 3];
+        trace.colors.memory.high = [4, 5, 6];
+        trace.colors.memory.background = [7, 8, 9];
+        trace.colors.cpu.text = [10, 11, 12];
+        let raster = trace.raster();
+        assert_ne!(old, trace.pixmaps());
+        assert_eq!(pixel(&raster, PLOT_BOTTOM, NEWEST), opaque([1, 2, 3]));
+        assert_eq!(
+            pixel(&raster, MEMORY_TOP + PLOT_BOTTOM, NEWEST),
+            opaque([4, 5, 6])
+        );
+        assert_eq!(pixel(&raster, MEMORY_TOP, 0), opaque([7, 8, 9]));
+        assert_eq!(
+            pixel(&raster, (PANEL_HEIGHT - CPU_LABEL.len()) / 2, LABEL_X + 1),
+            opaque([10, 11, 12])
+        );
     }
 }

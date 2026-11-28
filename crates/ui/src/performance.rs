@@ -1,3 +1,5 @@
+use crate::theme::Element;
+use crate::theme::styles;
 mod cpu;
 mod disk;
 mod gpu;
@@ -8,7 +10,7 @@ use std::collections::HashMap;
 
 use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, responsive, row, scrollable, text};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::cpu::Info;
 use peepers_core::disk::Kind as Drive;
 use peepers_core::health::{self, Health};
@@ -59,10 +61,16 @@ impl Card {
     fn view<'a, Message: 'a>(self) -> Element<'a, Message> {
         column![
             row![
-                container(text(self.title).wrapping(Wrapping::None))
-                    .width(Fill)
-                    .clip(true),
-                text(self.value).wrapping(Wrapping::None),
+                container(
+                    text(self.title)
+                        .style(styles::section_heading)
+                        .wrapping(Wrapping::None)
+                )
+                .width(Fill)
+                .clip(true),
+                text(self.value)
+                    .style(styles::value)
+                    .wrapping(Wrapping::None),
             ]
             .spacing(8),
             container(self.graph.view()).height(40),
@@ -74,12 +82,20 @@ impl Card {
     /// Title over value, for the narrow device list where a long value would crowd the title out.
     fn stacked<'a, Message: 'a>(self) -> Element<'a, Message> {
         column![
-            container(text(self.title).wrapping(Wrapping::None))
-                .width(Fill)
-                .clip(true),
-            container(text(self.value).wrapping(Wrapping::None))
-                .width(Fill)
-                .clip(true),
+            container(
+                text(self.title)
+                    .style(styles::section_heading)
+                    .wrapping(Wrapping::None)
+            )
+            .width(Fill)
+            .clip(true),
+            container(
+                text(self.value)
+                    .style(styles::value)
+                    .wrapping(Wrapping::None)
+            )
+            .width(Fill)
+            .clip(true),
             container(self.graph.view()).height(40),
         ]
         .spacing(6)
@@ -88,7 +104,7 @@ impl Card {
 }
 
 fn waiting<'a, Message: 'a>() -> Element<'a, Message> {
-    container(text("Waiting for the first sample").style(text::secondary))
+    container(text("Waiting for the first sample").style(styles::text_secondary))
         .center(Fill)
         .into()
 }
@@ -170,9 +186,9 @@ impl Performance {
                 .width(Fill)
                 .on_press(Message::Select(device.clone()))
                 .style(if *device == selected {
-                    button::secondary
+                    styles::button_secondary
                 } else {
-                    button::text
+                    styles::button_text
                 })
                 .into()
         });

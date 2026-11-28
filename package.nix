@@ -34,6 +34,8 @@ rustPlatform.buildRustPackage {
       ./crates
       ./packaging/peepers.desktop
       ./packaging/peepers.png
+      ./packaging/themes
+      ./docs/themes.md
     ];
   };
 
@@ -72,6 +74,10 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     install -Dm644 packaging/peepers.desktop $out/share/applications/peepers.desktop
     install -Dm644 packaging/peepers.png $out/share/icons/hicolor/512x512/apps/peepers.png
+    for theme in packaging/themes/*.toml; do
+      install -Dm644 "$theme" "$out/share/peepers/themes/$(basename "$theme")"
+    done
+    install -Dm644 docs/themes.md $out/share/doc/peepers/themes.md
   '';
 
   meta = {

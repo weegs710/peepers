@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::collections::HashSet;
 
 use iced::widget::{checkbox, column, progress_bar, row, text};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::bench::{Gpu, GpuKind, Outcome};
 use peepers_core::gpu::Adapter;
 
@@ -77,7 +79,7 @@ pub(super) fn view<'a>(app: &'a Benchmarks, adapters: &'a [Adapter]) -> Element<
                 adapter.model.as_deref().unwrap_or(&adapter.card)
             ))
             .size(13)
-            .style(text::danger),
+            .style(styles::text_danger),
         );
     }
     let controls = column![
@@ -86,7 +88,7 @@ pub(super) fn view<'a>(app: &'a Benchmarks, adapters: &'a [Adapter]) -> Element<
             app.run_button("Run", Start::One(Section::Gpu))
         } else {
             text("Tick at least one graphics chip to test")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into()
         },
     ]
@@ -140,14 +142,14 @@ fn results(app: &Benchmarks) -> Element<'_, Root> {
     let mut cards = column![
         text("Compute is how many calculations the chip finishes a second, in teraflops (trillions). It decides how much visual work a game or a render can ask of it. Memory speed is how fast the chip moves data in its own memory, which limits high resolutions and big textures.")
             .size(13)
-            .style(text::secondary),
+            .style(styles::text_secondary),
     ]
     .spacing(14);
     for gpu in &gpus {
         cards = cards.push(
             column![
-                text(&gpu.adapter).size(18),
-                text(kind(gpu.kind)).size(12).style(text::secondary),
+                text(&gpu.adapter).size(18).style(styles::section_heading),
+                text(kind(gpu.kind)).size(12).style(styles::text_secondary),
                 bar(
                     "Compute",
                     format!("{:.2} teraflops", gpu.gigaflops / 1000.0),

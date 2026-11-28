@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::fmt;
 
 use iced::widget::{checkbox, column, pick_list, row, text};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::bench::{Internet, Job, Outcome, Server, servers};
 
 use super::{Benchmarks, Message as Root, Section, Start, figure, not_run, page};
@@ -109,7 +111,7 @@ pub(super) fn view(app: &Benchmarks) -> Element<'_, Root> {
         controls = controls.push(
             text(format!("The list of servers could not be fetched, so only the automatic choice works: {error}"))
                 .size(13)
-                .style(text::danger),
+                .style(styles::text_danger),
         );
     }
     page(

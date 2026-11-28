@@ -1,7 +1,9 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::path::PathBuf;
 
 use iced::widget::{button, column, row, scrollable, space, text, text_input};
-use iced::{Element, Fill, Task};
+use iced::{Fill, Task};
 use peepers_core::cpu;
 use peepers_core::report::Report;
 use peepers_core::telemetry::Vitals;
@@ -80,24 +82,30 @@ impl Info {
     pub fn view(&self) -> Element<'_, Message> {
         let Some(report) = &self.report else {
             return text("Collecting system information")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let sections = report.sections.iter().map(|section| {
             let rows = section.rows.iter().map(|(key, value)| {
-                row![text(key).style(text::secondary).width(220), text(value)]
-                    .spacing(16)
-                    .into()
-            });
-            column![text(section.title).size(20), column(rows).spacing(4)]
-                .spacing(8)
+                row![
+                    text(key).style(styles::text_secondary).width(220),
+                    text(value)
+                ]
+                .spacing(16)
                 .into()
+            });
+            column![
+                text(section.title).size(20).style(styles::section_heading),
+                column(rows).spacing(4)
+            ]
+            .spacing(8)
+            .into()
         });
         let notice =
             notice::shown(self.notice.as_ref()).map(|notice| notice.view(Message::Dismiss));
         column![
             row![
-                text("System information").size(24),
+                text("System information").size(24).style(styles::heading),
                 space::horizontal(),
                 text_input("Folder for the exported report", &self.directory)
                     .on_input(Message::Directory)

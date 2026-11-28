@@ -1,10 +1,12 @@
+use crate::theme::Element;
+use crate::theme::styles;
 use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::time;
 use iced::widget::{button, column, container, progress_bar, row, space, table, text, text_input};
-use iced::{Element, Fill, Length, Right, Subscription, Task};
+use iced::{Fill, Length, Right, Subscription, Task};
 use peepers_core::scan::{Entry, FileType, Progress, Report, Scan};
 use peepers_core::volumes::{self, Volume};
 
@@ -168,18 +170,18 @@ impl DiskSpace {
                             format::bytes(volume.used()),
                             format::bytes(volume.total)
                         ))
-                        .style(text::secondary),
+                        .style(styles::text_secondary),
                     ],
                     progress_bar(0.0..=100.0, volume.used_percent()).girth(6),
                     text(format!("{} on {}", volume.filesystem, volume.source))
                         .size(12)
-                        .style(text::secondary),
+                        .style(styles::text_secondary),
                 ]
                 .spacing(4),
             )
             .width(Fill)
             .on_press(Message::Start(volume.mount.clone()))
-            .style(button::text)
+            .style(styles::button_text)
             .into()
         }))
         .spacing(2);
@@ -223,16 +225,16 @@ impl DiskSpace {
         }
         let Some(report) = &self.report else {
             return text("Press a disk or enter a folder to measure it.")
-                .style(text::secondary)
+                .style(styles::text_secondary)
                 .into();
         };
         let tab = |label, tab: Tab| {
             button(label)
                 .on_press(Message::Tab(tab))
                 .style(if self.tab == tab {
-                    button::primary
+                    styles::button_primary
                 } else {
-                    button::text
+                    styles::button_text
                 })
         };
         let summary = format!(
@@ -253,7 +255,7 @@ impl DiskSpace {
                 tab("File types", Tab::Types)
             ]
             .spacing(8),
-            text(summary).style(text::secondary),
+            text(summary).style(styles::text_secondary),
             container(scrolling(self.list(report)).height(Fill)).height(Length::FillPortion(3)),
         ]
         .spacing(8)

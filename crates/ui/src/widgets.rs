@@ -1,3 +1,5 @@
+use crate::theme::styles;
+use crate::theme::{Element, Theme};
 use std::cmp::Ordering;
 
 use iced::widget::canvas::{self, Frame, Geometry, Path};
@@ -6,7 +8,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{
     Scrollable, button, column, container, grid, responsive, row, scrollable, space, text,
 };
-use iced::{Element, Fill, Length, Point, Rectangle, Renderer, Theme, mouse};
+use iced::{Fill, Length, Point, Rectangle, Renderer, mouse};
 
 use peepers_core::telemetry::Vitals;
 
@@ -18,7 +20,7 @@ const SCROLLBAR_GAP: f32 = 6.0;
 /// A scrollable whose bar has a strip of its own instead of floating over the content.
 pub fn scrolling<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
-) -> Scrollable<'a, Message> {
+) -> Scrollable<'a, Message, Theme> {
     scrollable(content).spacing(SCROLLBAR_GAP)
 }
 
@@ -65,8 +67,11 @@ pub fn stat<'a, Message: 'a>(
     value: impl Into<String>,
 ) -> Element<'a, Message> {
     column![
-        text(label.into()).size(12).style(text::secondary),
-        text(value.into()).size(18).wrapping(Wrapping::WordOrGlyph)
+        text(label.into()).size(12).style(styles::label),
+        text(value.into())
+            .size(18)
+            .style(styles::value)
+            .wrapping(Wrapping::WordOrGlyph)
     ]
     .spacing(2)
     .into()
@@ -95,7 +100,11 @@ pub fn disk_lights<'a, Message: 'a>(vitals: &Vitals) -> Element<'a, Message> {
     column(vitals.disks.iter().map(|disk| {
         let busy = disk.read_per_second + disk.write_per_second > 0;
         row![
-            text("●").style(if busy { text::success } else { text::secondary }),
+            text("●").style(if busy {
+                styles::text_success
+            } else {
+                styles::text_secondary
+            }),
             text(disk.name.clone()).size(12),
         ]
         .spacing(6)
@@ -117,9 +126,9 @@ pub fn detail<'a, Message: 'a>(
 ) -> Element<'a, Message> {
     column![
         row![
-            text(title.into()).size(26),
+            text(title.into()).size(26).style(styles::heading),
             space::horizontal(),
-            text(subtitle.unwrap_or_default()).style(text::secondary)
+            text(subtitle.unwrap_or_default()).style(styles::text_secondary)
         ],
         container(graph.view()).height(Fill).width(Fill),
         container(scrolling(facts).width(Fill)).max_height(available * FACTS_SHARE),
@@ -201,12 +210,20 @@ enum Arrow {
 }
 
 impl Arrow {
-    fn view<'a, Message: 'a>(self, side: f32) -> Element<'a, Message> {
-        canvas::Canvas::new(self).width(side).height(side).into()
+    fn view<'a, Message: 'a>(self, side: f32, role: &'static str) -> Element<'a, Message> {
+        canvas::Canvas::new(ArrowIcon { arrow: self, role })
+            .width(side)
+            .height(side)
+            .into()
     }
 }
 
-impl<Message> canvas::Program<Message> for Arrow {
+struct ArrowIcon {
+    arrow: Arrow,
+    role: &'static str,
+}
+
+impl<Message> canvas::Program<Message, Theme> for ArrowIcon {
     type State = ();
 
     fn draw(
@@ -219,10 +236,10 @@ impl<Message> canvas::Program<Message> for Arrow {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let (width, height) = (frame.width(), frame.height());
-        let [first, second, tip] = match self {
-            Self::Down => [(0.15, 0.3), (0.85, 0.3), (0.5, 0.75)],
-            Self::Up => [(0.15, 0.7), (0.85, 0.7), (0.5, 0.25)],
-            Self::Right => [(0.3, 0.15), (0.3, 0.85), (0.75, 0.5)],
+        let [first, second, tip] = match self.arrow {
+            Arrow::Down => [(0.15, 0.3), (0.85, 0.3), (0.5, 0.75)],
+            Arrow::Up => [(0.15, 0.7), (0.85, 0.7), (0.5, 0.25)],
+            Arrow::Right => [(0.3, 0.15), (0.3, 0.85), (0.75, 0.5)],
         }
         .map(|(x, y)| Point::new(width * x, height * y));
         let triangle = Path::new(|path| {
@@ -231,7 +248,15 @@ impl<Message> canvas::Program<Message> for Arrow {
             path.line_to(tip);
             path.close();
         });
-        frame.fill(&triangle, theme.palette().text);
+        frame.fill(
+            &triangle,
+            match self.role {
+                "section_heading" => styles::section_heading(theme),
+                _ => styles::table_heading(theme),
+            }
+            .color
+            .unwrap_or(theme.palette().text),
+        );
         vec![frame.into_geometry()]
     }
 }
@@ -245,12 +270,15 @@ pub fn fold_header<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let arrow = if open { Arrow::Down } else { Arrow::Right };
     button(
-        row![arrow.view(FOLD_ARROW), text(label).size(28)]
-            .spacing(10)
-            .align_y(iced::Center),
+        row![
+            arrow.view(FOLD_ARROW, "section_heading"),
+            text(label).size(28).style(styles::section_heading)
+        ]
+        .spacing(10)
+        .align_y(iced::Center),
     )
     .on_press(press)
-    .style(button::text)
+    .style(styles::button_text)
     .into()
 }
 
@@ -262,14 +290,18 @@ pub fn sort_header<'a, Message: Clone + 'a>(
     press: Message,
 ) -> Element<'a, Message> {
     let arrow: Element<'a, Message> = match direction {
-        Some(true) => Arrow::Down.view(ARROW),
-        Some(false) => Arrow::Up.view(ARROW),
+        Some(true) => Arrow::Down.view(ARROW, "table_heading"),
+        Some(false) => Arrow::Up.view(ARROW, "table_heading"),
         None => space().width(ARROW).height(ARROW).into(),
     };
-    button(row![text(label), arrow].spacing(6).align_y(iced::Center))
-        .on_press(press)
-        .style(button::text)
-        .into()
+    button(
+        row![text(label).style(styles::table_heading), arrow]
+            .spacing(6)
+            .align_y(iced::Center),
+    )
+    .on_press(press)
+    .style(styles::button_text)
+    .into()
 }
 
 /// What pressing the control labelled `target` in `view` sends, found by drawing the view as a

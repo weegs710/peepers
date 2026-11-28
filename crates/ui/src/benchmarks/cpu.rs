@@ -1,4 +1,5 @@
-use iced::Element;
+use crate::theme::Element;
+
 use iced::widget::column;
 use peepers_core::bench::{Cpu, Level, Outcome, Pair};
 

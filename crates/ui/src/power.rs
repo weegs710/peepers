@@ -1,5 +1,7 @@
+use crate::theme::Element;
+use crate::theme::styles;
+use iced::Fill;
 use iced::widget::{column, container, row, rule, scrollable, space, text};
-use iced::{Element, Fill};
 use peepers_core::gpu::Adapter;
 use peepers_core::sensors::{Chip, Kind, Reading};
 use peepers_core::telemetry::Vitals;
@@ -76,13 +78,13 @@ pub fn view<'a, Message: 'a>(
 ) -> Element<'a, Message> {
     let sensors: Element<'a, Message> = match history.latest() {
         Some(latest) => column![
-            text("Live sensors").size(28),
+            text("Live sensors").size(28).style(styles::heading),
             column(groups(history, latest, unit)).spacing(32)
         ]
         .spacing(24)
         .into(),
         None => text("Waiting for live sensor readings")
-            .style(text::secondary)
+            .style(styles::text_secondary)
             .into(),
     };
     scrollable(
@@ -132,7 +134,9 @@ fn groups<'a, Message: 'a>(
 /// A group's name, set apart so it can be found in a long page, over what it holds.
 fn header<'a, Message: 'a>(group: Group, parts: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     column![
-        text(group.title()).size(28).style(text::primary),
+        text(group.title())
+            .size(28)
+            .style(styles::section_heading_accent),
         rule::horizontal(2),
         column(parts)
             .spacing(24)
@@ -149,8 +153,8 @@ fn silent<'a, Message: 'a>(adapter: &Adapter) -> Element<'a, Message> {
         .clone()
         .unwrap_or_else(|| adapter.card.clone());
     column![
-        text(name).size(20),
-        text("No sensor readings are available for it").style(text::secondary),
+        text(name).size(20).style(styles::section_heading),
+        text("No sensor readings are available for it").style(styles::text_secondary),
     ]
     .spacing(4)
     .into()
@@ -184,12 +188,16 @@ fn processor<'a, Message: 'a>(history: &History, latest: &'a Vitals) -> Element<
         .max()
         .map_or_else(format::unavailable, |&khz| format::frequency(khz));
     column![
-        text("Processor clocks").size(20),
+        text("Processor clocks")
+            .size(20)
+            .style(styles::section_heading),
         row![
             container(
                 Graph::new(Scale::Fit { floor: 1_000_000.0 })
+                    .key("clock")
                     .line(line, Tone::Primary)
                     .named("Average clock")
+                    .series("frequency")
                     .readout(as_frequency)
                     .view()
             )
@@ -197,7 +205,7 @@ fn processor<'a, Message: 'a>(history: &History, latest: &'a Vitals) -> Element<
             .height(48),
             column![
                 text(format!("Average {current}")),
-                text(format!("Fastest core {fastest}")).style(text::secondary)
+                text(format!("Fastest core {fastest}")).style(styles::text_secondary)
             ]
             .spacing(2),
         ]
@@ -211,7 +219,7 @@ fn processor<'a, Message: 'a>(history: &History, latest: &'a Vitals) -> Element<
                     column![
                         text(format!("CPU {}", core.id))
                             .size(12)
-                            .style(text::secondary),
+                            .style(styles::text_secondary),
                         text(
                             core.frequency_khz
                                 .map_or_else(format::unavailable, format::frequency)
@@ -237,9 +245,14 @@ fn domains<'a, Message: 'a>(latest: &Vitals) -> Element<'a, Message> {
             .spacing(16)
             .into()
     });
-    column![text("Package power").size(20), column(rows).spacing(4)]
-        .spacing(10)
-        .into()
+    column![
+        text("Package power")
+            .size(20)
+            .style(styles::section_heading),
+        column(rows).spacing(4)
+    ]
+    .spacing(10)
+    .into()
 }
 
 fn section<'a, Message: 'a>(
@@ -254,9 +267,9 @@ fn section<'a, Message: 'a>(
         .map(|reading| reading_row(history, &chip.id, reading, unit));
     column![
         row![
-            text(title).size(20),
+            text(title).size(20).style(styles::section_heading),
             space::horizontal(),
-            text(format!("{} ({})", chip.name, chip.id)).style(text::secondary)
+            text(format!("{} ({})", chip.name, chip.id)).style(styles::text_secondary)
         ],
         column(rows).spacing(6),
     ]
@@ -308,14 +321,17 @@ fn reading_row<'a, Message: 'a>(
             format::sensor_value(reading.kind, low, unit),
             format::sensor_value(reading.kind, high, unit)
         ))
-        .style(text::secondary)
+        .style(styles::text_secondary)
         .width(170),
         container(
             Graph::new(Scale::Fit {
                 floor: floor(reading.kind)
             })
+            .key("sensor")
+            .instance(format!("{chip}/{}", reading.label))
             .line(values, Tone::Primary)
             .named(reading.label.clone())
+            .series("value")
             .readout(move |value| format::sensor_value(kind, value, unit))
             .view()
         )
